@@ -96,11 +96,13 @@ async function renderDiagrams() {
         node.closest('figure').querySelector('details').open = false;
       } catch {
         node.innerHTML = '<p class="diagram-error">图形暂时无法显示，可展开下方流程源码阅读。</p>';
-        node.closest('figure').querySelector('details').open = true;
+        const figure = node.closest('figure');
+        figure.classList.add('diagram-failed');
+        figure.querySelector('details').open = true;
       }
     }
   } catch {
-    nodes.forEach(node => { node.innerHTML = '<p class="diagram-error">图形资源未加载，可展开下方流程源码阅读。</p>'; node.closest('figure').querySelector('details').open = true; });
+    nodes.forEach(node => { node.innerHTML = '<p class="diagram-error">图形资源未加载，可展开下方流程源码阅读。</p>'; const figure = node.closest('figure'); figure.classList.add('diagram-failed'); figure.querySelector('details').open = true; });
   }
 }
 renderDiagrams();

@@ -76,4 +76,4 @@ The mobile directory transition is 180 ms ease-out. Reduced-motion preferences d
 
 ## Evidence
 
-The parent task verified desktop and 390 × 844 mobile rendering, all eight diagrams, full-page overflow, search navigation and mobile chapter selection. Mechanical detector returned no findings. This record was extracted from the completed source; it does not imply platform implementation or capacity acceptance.
+The publication validation verified desktop and 390 × 844 mobile rendering, all eight diagrams, full-page overflow, search navigation and mobile chapter selection. Mechanical checks returned no findings. This record describes the documentation site only; it does not imply platform implementation or capacity acceptance.

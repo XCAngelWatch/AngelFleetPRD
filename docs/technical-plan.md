@@ -2,7 +2,7 @@
 
 复用 XCtechResource 的 React/Next.js 前端工程与 Cloudflare 服务基础，迁移 1Panel v2 的完整运维功能。Go 的容器、网站、数据库、文件、备份及主机执行能力继续复用。首版以 XC React 控制台、Cloudflare 控制面、connector 和原 core/agent 完成功能闭环；原 core 最终退役单列后续阶段。本文聚焦功能范围、代码复用边界、接口协议、数据归属、迁移步骤和验收，不纳入定价与费用模型。
 
-**设计版本 2.2 · 2026-11-12 · 2.1 评审校正、功能迁移、产品生命周期与分阶段验收基线**
+**设计版本 2.2 · 审查基线 2026-11-12 · 2.1 评审校正、功能迁移、产品生命周期与分阶段验收基线**
 
 1Panel 源码基线固定为 2026-11-12 审查时与远端 dev-v2 核对一致的 `cedb8ddda9254bdef0fddba96b7fa59c6ab8c633`，提交时间为北京时间 2026 年 11 月 12 日 14:22:38；相比原方案的 `daae8c43` 增加 84 个提交。XCtechResource 以 2026-11-12 审查时的工作树为复用输入，其 HEAD 为 `641b8b1`，工作树含未提交修改，实施前需独立固定可复现版本。以下复用与改造安排属于实施设计，完成状态以各阶段功能验收为准。[1Panel 固定源码](https://github.com/1Panel-dev/1Panel/commit/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633)
 
@@ -18,7 +18,7 @@
 | 控制连接 | 每节点 AgentConn DO，connector 主动 WSS | 重连代次、能力协商和持久回执保持兼容 |
 | 实时流 | 每会话 Relay，两端主动 WSS | 共用会话生命周期，各业务采用独立流适配器 |
 | 租户数据 | 目录库 + 租户 D1 + TenantData Worker | 分库供给、迁移与写入隔离按统一协议演进 |
-| 任务 | D1 命令意图、outbox、Queues、本地 journal | 多阶段任务使用 Workflows，结果仍可从 D1 对账 |
+| 任务 | D1 命令意图、AgentConn dispatchKick 快路径、outbox/Queues 补偿、本地 journal | 多阶段任务使用 Workflows，结果仍可从 D1 对账 |
 | 文件 | R2 制品与对象通道，节点负责落盘和校验 | 分片、续传、恢复与清理完整闭环 |
 | 国内接入 | 受控 CONNECT/L4 代理 | 分别验证控制、终端、文件和升级路径 |
 
@@ -131,7 +131,7 @@ Workers 的 CPU、内存和请求体限制需要在 API 和文件设计中落实
 
 ## 6.3 索引与约束设计
 
-commands 的唯一键为 tenantId + idempotencyKey，另建 nodeId/state/createdAt 的任务查询索引。command_events 对 eventId 唯一，并按 commandId + agentEventSequence 去重。outbox 按 publishedAt/availableAt/eventId 查待发布事件。terminal_sessions 按 authSessionId/state 查撤销范围。每个索引均以实际查询和 `rows_read/rows_written` 测量评审，避免在高频摘要上无差别增加索引。
+commands 以 tenantId + commandId 为主键；幂等 key 的唯一保护由 `idempotency_receipts` 的 key guard 承担，另建 nodeId/state/createdAt 的任务查询索引。command_events 对 eventId 唯一，并按 commandId + agentEventSequence 去重。outbox 按 publishedAt/availableAt/eventId 查待发布事件。terminal_sessions 按 authSessionId/state 查撤销范围。每个索引均以实际查询和 `rows_read/rows_written` 测量评审，避免在高频摘要上无差别增加索引。
 
 同一 D1 的 commands、初始审计与 outbox 通过 batch 原子提交。条件 UPDATE 返回零行仍属于成功 SQL，派生 INSERT 必须使用相同的赢家标识和条件，服务端读取操作结果后才返回成功。跨 D1、DO、Queues 和 R2 的状态通过幂等事件与补偿推进。关键表、字段、API 与消息示例见附录 A。[D1 批处理语义](https://developers.cloudflare.com/d1/worker-api/d1-database/)
 
@@ -346,7 +346,7 @@ XC 当前应用壳和权限菜单可作为基础，但旧 RoleGuard 与权限点
 | 备份与安装制品 | 对象存储，云端索引与授权 |
 | 执行秘密 | 优先留节点，必要云端副本受保护 |
 
-Cron、证书续期等默认继续由节点调度器执行。云端下发配置版本、展示下一次执行与历史，恢复联网后补报；同一策略不能由云端与节点同时调度。
+Cron、证书续期等默认继续由节点调度器执行。云端下发配置版本、展示下一次执行与历史，恢复联网后补报；同一策略不能由云端与节点同时调度。离线期间允许执行的主体是绑定已签名策略版本的 `POLICY_SCHEDULER`，它只执行此前已确认的计划，不等同于本地交互管理写入；未获策略授权的本地 API、MCP、1pctl 和人工维护写入仍受 `CLOUD_MANAGED` fence 拒绝。
 
 ## 13.5 四类接口与执行对账
 
@@ -460,7 +460,7 @@ P0 在压测前冻结负载文件与摘要：命令/秒及操作比例、突发�
 
 ## 15.3 2.2 评审校正与可执行门禁
 
-本节把 2.1 评审中已确认的设计缺口落成实施契约。它不裁剪第 13 节的完整功能迁移范围，也不引入定价或费用模型；新增的参数和状态在 P0 通过真实代码、Cloudflare 配置与实验结果冻结前，均保持 `待 PoC` 或 `PLANNED`。
+本节是 2.2 评审校正的门禁索引，字段、状态和 SQL 实现以附录 A/C 为权威，避免同一契约在两处独立演进。它不裁剪第 13 节的完整功能迁移范围，也不引入定价或费用模型；新增的参数和状态在 P0 通过真实代码、Cloudflare 配置与实验结果冻结前，均保持 `待 PoC` 或 `PLANNED`。
 
 ### 15.3.1 R1 命令状态、并发事件与证据裁决
 
@@ -475,7 +475,7 @@ P0 在压测前冻结负载文件与摘要：命令/秒及操作比例、突发�
 | 证实未启动且过期 | DISPATCHED、RECEIVED、RECONCILING | EXPIRED | 只能依据可信未启动证据；已启动任务不得标为过期 |
 | 核对证实完成/失败 | UNCERTAIN、REVIEW_REQUIRED | SUCCEEDED 或 FAILED | 只读核验、checkpoint 或现场事实满足操作契约 |
 | 无法安全判定 | UNCERTAIN、REVIEW_REQUIRED | REVIEW_REQUIRED | `REVIEW_REQUIRED` 是人工待决终态，不自动改写成功或失败 |
-| 晚到结果 | 任一已应用或人工结论 | 原状态或 CONFLICT | 按 `eventId + agentEventSequence` 去重；冲突只追加证据和审计，不覆盖人工结论 |
+| 晚到结果 | 任一已应用或人工结论 | 原命令状态（事件 `applyState=CONFLICT`） | 按 `eventId + agentEventSequence` 去重；冲突只追加证据和审计，不覆盖人工结论 |
 
 终态集合为 `{SUCCEEDED, FAILED, CANCELLED, EXPIRED, REJECTED, REVIEW_REQUIRED}`。`CANCELLED` 表示停止后续执行，不表示已回滚；`sideEffectExtent` 取 `NONE/PARTIAL/FULL`，实际回滚必须是操作契约声明的补偿步骤并创建关联的新 `commandId`。人工处置记录处置人、时间、权限、依据证据和结论；`UNRESOLVED` 保留 `REVIEW_REQUIRED`。AC-CMD/FI-CMD 增加取消/完成竞争、部分副作用、人工未决、人工后晚到结果一致与冲突、RUNNING 失联六类用例。
 
@@ -483,7 +483,7 @@ P0 在压测前冻结负载文件与摘要：命令/秒及操作比例、突发�
 
 HTTP 幂等键和节点 `commandId` tombstone 是两层不同保护。服务端首次创建时固定 `expiresAt`，客户端重试必须复用原始 body、`resourceVersion` 和过期策略；刷新资源版本或延长有效期属于新意图、新 key。服务端先完成当前身份、租户、节点和权限版本校验，再查询幂等收据，不能用旧 key 绕过撤权。
 
-`requestFingerprint` 计算规范化 method、path、body 与 `Idempotency-Key`；`intentHash` 计算最终不可变命令意图。两者、首次生成的 `expiresAt` 和原 `commandId` 一并保存。HTTP 幂等收据保留期必须覆盖客户端最大重试窗口和 7 天入场期，且不得长于节点去重 tombstone 保留期（当前节点窗口为 14 天、tombstone 至少 30 天）。云端收据过窗后，同 key 作为新意图处理并返回 `idempotencyReplay=false`；节点仍持有旧 tombstone 时，按 `commandId + intentHash` 拒绝不一致重放。FI-CMD 覆盖云端收据已清理、节点 tombstone 仍在或已清理的四象限。
+`requestFingerprint` 计算规范化 method、path、body 与 `Idempotency-Key`；`intentHash` 计算最终不可变命令意图。两者、首次生成的 `expiresAt` 和原 `commandId` 一并保存。HTTP 幂等收据保留期必须覆盖客户端最大重试窗口和 14 天交付重投窗口；破坏性操作的 key guard 至少覆盖节点 tombstone 窗口。收据正文在 `retainedUntil` 前不得清理，期间同 key 同摘要只能返回原 commandId 并将 `idempotencyReplay=true`，同 key 不同摘要返回 409；正文清理后保留紧凑 key guard 到 `guardUntil`。key guard 尚在时同 key 返回 410/`IDEMPOTENCY_KEY_EXPIRED`，不能静默创建新 commandId；只有完成明确的 key guard 清理策略后才允许复用 key，并返回 `idempotencyReplay=false`。节点 tombstone 仍按 `commandId + intentHash` 拒绝不一致重放；对 `backup.restore`、`disk.format` 等非幂等或破坏性操作，节点再按 `(operation, intentHash)` 保留效果去重窗口。FI-CMD 覆盖收据正文、key guard 和节点 tombstone 分别存在或清理的四象限。
 
 ### 15.3.3 R3 授权缓存、撤销传播与租约上界
 
@@ -491,6 +491,7 @@ HTTP 幂等键和节点 `commandId` tombstone 是两层不同保护。服务端�
 
 ```text
 leaseUntil <= min(
+  issuedAt + 90s,
   verifiedAt + maxAuthorizationStaleness,
   sessionExpiresAt,
   credentialExpiresAt,
@@ -498,21 +499,21 @@ leaseUntil <= min(
 )
 ```
 
-`maxAuthorizationStaleness`、正常撤销传播目标和故障上界均待 PoC 冻结；`p95≤5s` 只能作为候选目标。撤销观测从 D1 授权版本提交开始，分别测量拒绝新准入、停止投递和关闭 PTY。已获知撤销版本的端点立即拒绝旧 grant；网络隔离且尚未知撤销的执行端只能依靠绝对 `leaseUntil` 停止，不能宣称即时拒绝。CAP-03 分通知可达与通知丢失两种条件报告，并验证缓存命中不会延长旧授权。
+`maxAuthorizationStaleness`、正常撤销传播目标和故障上界均待 PoC 冻结；`p95≤5s` 只能作为候选目标。当前参数可推导通知丢失时的保守硬边界为 `90s + 15s clockUncertainty = 105s`，若实测时钟不确定度或调度延迟更高，必须取更大值并更新参数冻结表。撤销观测从 D1 授权版本提交开始，分别测量拒绝新准入、停止投递和关闭 PTY。已获知撤销版本的端点立即拒绝旧 grant；网络隔离且尚未知撤销的执行端只能依靠绝对 `leaseUntil` 停止，不能宣称即时拒绝。CAP-03 分通知可达与通知丢失两种条件报告，并验证缓存命中不会延长旧授权。
 
 ### 15.3.4 R4 节点写入控制与跨入口互斥
 
-首版在节点实际 Go service 变更入口强制 `managementMode ∈ {CLOUD_MANAGED, LOCAL_MAINTENANCE}` 与持久 `fenceVersion`，而不是只在 connector 或 React 层隐藏入口。覆盖 core API、agent socket、MCP、1pctl、Cron、证书续期、应用同步和维护任务。本机 root 能绕过 fence 属于运维信任边界，应记录为已知限制并通过漂移检测发现，不能宣称由协议防住。
+首版在节点实际 Go service 变更入口强制 `managementMode ∈ {CLOUD_MANAGED, LOCAL_MAINTENANCE, POLICY_SCHEDULER}` 与持久 `fenceVersion`，而不是只在 connector 或 React 层隐藏入口。覆盖 core API、agent socket、MCP、1pctl、Cron、证书续期、应用同步和维护任务。`POLICY_SCHEDULER` 仅允许已签名且已确认的策略版本、到期时间和资源锁，不允许临时人工参数；`LOCAL_MAINTENANCE` 是本地交互恢复主体，进入后暂停云端新写入。维护进入、超时和离线回切由节点本地 watchdog 根据持久 deadline 执行，恢复联网后再由云端核对 fence 和水位。本机 root 能绕过 fence 属于运维信任边界，应记录为已知限制并通过漂移检测发现，不能宣称由协议防住。
 
-进入 `LOCAL_MAINTENANCE` 前排空或标记在途任务、提升 fence、记录操作者和原因；维护超时自动回切并重新核对水位。资源锁矩阵至少覆盖：网站配置与证书续期的 nginx 配置锁、数据库恢复与容器更新的 volume 锁、快照恢复与 Cron 备份的节点/数据锁、升级与所有破坏性操作的节点锁。`commandId` 去重只解决同一命令重复，不能替代不同入口对同一资源的互斥。AC-LIFE 增加云端与 Cron、证书与网站配置、恢复与备份三组并发用例。
+命令创建时保存当时的 `fenceVersion`；`beginDispatch` 和本地 Go 入口必须同时核对节点当前 fence，维护期间冻结旧 fence 的新写入，回切后重新授权或进入核对。进入 `LOCAL_MAINTENANCE` 前排空或标记在途任务、提升 fence、记录操作者和原因；维护超时自动回切并重新核对水位。资源锁矩阵至少覆盖：网站配置与证书续期的 nginx 配置锁、数据库恢复与容器更新的 volume 锁、快照恢复与 Cron 备份的节点/数据锁、升级与所有破坏性操作的节点锁。`commandId` 去重只解决同一命令重复，不能替代不同入口对同一资源的互斥。AC-LIFE 增加云端与 Cron、证书与网站配置、恢复与备份三组并发用例。
 
 ### 15.3.5 R5–R6 容量实验与 Cloudflare 硬约束
 
-命令队列不能沿用默认批处理配置来声称 2 秒接收目标。Cloudflare Queues 当前默认 `max_batch_size=10`、`max_batch_timeout=5s`，单条失败默认可能导致批次重投；命令队列在 P0 冻结 `max_batch_size=1`、`max_batch_timeout=0` 的低延迟配置，消费者逐条 `ack()`，并分别测低负载、峰值、故障恢复三条路径。`oldestOutboxAge` 和 60 秒补偿扫描属于恢复路径，单独报告，不与正常接收 p95 混算。[Queues 批处理与重试](https://developers.cloudflare.com/queues/configuration/batching-retries/)
+命令投递不能把 Queues 当作有界低延迟通道。官方默认 `max_batch_size=10`、`max_batch_timeout=5s`，单条失败默认可能导致批次重投；即使设置 `max_batch_timeout=0`，官方 Workflows 示例也说明队列交付通常需要数秒，偶尔可能超过一分钟。因此 `online command persistent receive p95≤2s` 只绑定提交后的控制面直连快路径：TenantData/控制 API 在 D1 提交成功后，以有界超时调用对应 AgentConn 的 `dispatchKick(commandId, eventId, revision)` RPC；DO 再执行 `beginDispatch`、持久化准入并通过已建立的 WSS 投递。直连失败不丢失意图，持久 outbox 仍经 Queues 消费者补偿，补偿路径单独报告分位数和 `oldestOutboxAge`，不得与 2 秒目标混算。命令 Queue 在 P0 冻结 `max_batch_size=1`、`max_batch_timeout=0`，逐条 `ack()`；低负载、峰值、队列交付延迟、直连失败、重复 kick 和故障恢复分别压测。[Queues 批处理与重试](https://developers.cloudflare.com/queues/configuration/batching-retries/)、[Queues 触发 Workflows 示例](https://developers.cloudflare.com/workflows/examples/trigger-from-webhook/)
 
-CAP-01 以单租户 D1 为主要容量风险。D1 单库逐条处理查询，额外请求开销不计入 SQL 时长，过载可能返回 `overloaded`；单库上限 10GB 且不可提升。实验记录授权缓存命中率、真实 SQL/批次数、排队时延、`rows_read/rows_written`、事件和审计增长、归档阈值与恢复余量。负载预算不能把 333 次逻辑授权检查直接当成 333 条 SQL；但必须证明缓存命中和 batch 后的串行时间总和低于 1 秒并留有恢复余量。[D1 限制](https://developers.cloudflare.com/d1/platform/limits/)
+CAP-01 以单租户 D1 和每节点 AgentConn 为主要容量风险。D1 单库逐条处理查询，额外请求开销不计入 SQL 时长，过载可能返回 `overloaded`；单库上限 10GB 且不可提升。Workers Paid 每次 Worker 调用最多 1000 个 D1 查询，`db.batch()` 按一次查询计数；Workers/DO 每次请求最多 6 个同时出站连接，这些是调用级限制，不应误写成单个 D1 的固定并发连接数。实验记录授权缓存命中率、真实 SQL/批次数、排队时延、`rows_read/rows_written`、事件和审计增长、归档阈值与恢复余量。负载预算不能把 333 次逻辑授权检查直接当成 333 条 SQL；必须证明缓存命中和 batch 后的串行时间总和低于 1 秒并留有恢复余量。[D1 限制](https://developers.cloudflare.com/d1/platform/limits/)、[Workers 限制](https://developers.cloudflare.com/workers/platform/limits/)
 
-实现层面补充负向用例：单行/字符串/BLOB 超过 2MB、查询结果超过 50MB、单语句超过 100KB、绑定参数超过 100、batch 超过 30 秒；记录 `overloaded`、排队时延和清空时间。AgentConn 64MiB 是每个对象达到上限时的理论持久缓存水位（10,000 个同时满载约 625GiB/671.09GB），不是正常内存占用；需测正常水位分布和 48MiB 高水位暂停是否足够。摘要为每节点覆盖一行，存储增长预算应单算 commands、events、audit、tombstone、索引和故障积压，不把摘要写次数当新增行数。费用模型仍不属于本文。
+实现层面补充负向用例：单行/字符串/BLOB 超过 2MB、查询结果超过 50MB、单语句超过 100KB、绑定参数超过 100、batch 超过 30 秒、单次 Queue 消息超过 128KB、`sendBatch` 超过 100 条或 256KB、Queue 单队列超过 5,000 msg/s、队列积压超过 25GB、消费者并发达到 250；记录 `overloaded`、`SQLITE_FULL`、队列限流、排队时延和清空时间。SQLite-backed DO Paid 单对象存储上限是 10GB，单行/键值上限是 8MB，收到的单条 WebSocket 消息上限是 32MiB，单对象约 1,000 req/s 是软上限；AgentConn 的 64MiB 只是应用层未确认结果预算，不是平台上限。10,000 个对象同时达到该预算约 625GiB/671.09GB，是积压容量压力测试的理论值，不是正常内存占用。高水位 48MiB 时暂停新普通任务，保留结果确认、撤销、取消、健康恢复和对账通道；DO 达到存储上限时写入失败但读与 DELETE 仍可用，故障矩阵必须验证清理与恢复。摘要为每节点覆盖一行，存储增长预算应单算 commands、events、audit、tombstone、索引和故障积压，不把摘要写次数当新增行数。费用模型仍不属于本文。[Queues 限制](https://developers.cloudflare.com/queues/platform/limits/)、[Durable Objects 限制](https://developers.cloudflare.com/durable-objects/platform/limits/)
 
 ### 15.3.6 R7 Go 操作台账、R8 术语与 R9 参数冻结
 
@@ -540,10 +541,34 @@ CAP-01 以单租户 D1 为主要容量风险。D1 单库逐条处理查询，额
 | 续租周期 | 30s + jitter | 待 PoC | CAP-03 |
 | `maxAuthorizationStaleness` | 待定 | 待 PoC | CAP-03 |
 | 命令队列 batch size/timeout | 1 / 0s | P0 冻结候选 | CAP-01、CAP-04 |
-| HTTP 幂等收据保留期 | ≥7d 且不长于节点 tombstone | 待 P0 冻结 | FI-CMD |
+| HTTP 幂等收据 / key guard | ≥14d；破坏性操作 ≥30d | 待 P0 冻结 | FI-CMD |
 | 节点 command tombstone | ≥30d | 待 PoC | FI-CMD |
 | 补偿扫描周期 | 60s | 待 PoC | CAP-04 |
 | AgentConn 结果高水位 | 48MiB / 上限 64MiB | 待 PoC | CAP-01、CAP-04 |
+| 终端并发上限 | 8 / 节点 | 待 PoC | CAP-02、NET |
+| 终端二进制帧 | 16–32KiB | 待 PoC | CAP-02 |
+| 终端方向未确认窗口 | 256KiB | 待 PoC | CAP-02 |
+| 终端总缓冲 | 1MiB / 会话 | 待 PoC | CAP-02 |
+| 终端断线保留 | 1MiB 或 30s | 待 PoC | CAP-02 |
+| 待投递上限 | 1,000 条或 8MiB / 节点 | 待 PoC | CAP-01、CAP-04 |
+| journal 应急磁盘余量 | 50MiB | 待 PoC | CAP-04 |
+| R2 分片大小 | 16–64MiB | 待 PoC | CAP-02、NET |
+| R2 分片 URL 有效期 | 15min | 待 PoC | CAP-02 |
+| 节点 enrollment ticket 有效期 | 10min | 待 PoC | DEV01、DEV02 |
+| 终端角色 ticket 有效期 | 60s | 待 PoC | AC-TERM、FI-LEASE |
+| 终端建立预留超时 | 30s | 待 PoC | AC-TERM、FI-LEASE |
+| 连接凭证有效期 | 5min | 待 PoC | CAP-03 |
+| 节点业务心跳 | 60s | 待 PoC | CAP-01、CAP-04 |
+| WebSocket 协议 ping | 30s | 待 PoC | NET |
+| D1 摘要覆盖写周期 | 300s | 待 PoC | CAP-01、CAP-04 |
+| 订阅监控频率 | 按页面订阅短时提高 | 待 PoC | NET |
+| 重连退避 | 1–60s + full jitter | 待 PoC | CAP-04、NET |
+| 每 TenantData Worker 绑定预算 | 200 租户 | P0 爆炸半径预算，不是平台上限 | CAP-01、CAP-04 |
+| 控制消息内联上限 | 64KiB | 待 PoC | CAP-01 |
+| 单条结果内联上限 | 64KiB | 待 PoC | CAP-01 |
+| 命令入场有效期 | 7d | 待 PoC | FI-CMD、CAP-04 |
+| 命令交付重投窗口 | 14d | 待 PoC | FI-CMD、CAP-04 |
+| 策略离线最大窗口 | 待定 | P0 冻结 | DEV08、CAP-04 |
 
 ### 15.3.7 R10–R12 追踪、兼容与变更历史
 
@@ -630,16 +655,17 @@ intentHash 覆盖 tenantId、nodeId、nodeIncarnation、operation、规范化业
 | 表或集合 | 主要字段与约束 |
 |---|---|
 | tenant_members | tenantId、userId、role、authorizationVersion，成员唯一键 |
-| nodes | tenantId、nodeId、incarnation、credentialVersion、publicKeyFingerprint、status、capabilities、connectorBuild、adapterVersion、executionMode、coreVersion、agentVersion、revision |
+| nodes | tenantId、nodeId、incarnation、credentialVersion、publicKeyFingerprint、status、capabilities、connectorBuild、adapterVersion、executionMode、coreVersion、agentVersion、managementMode、fenceVersion、revision |
 | enrollments | enrollmentId、ticketHash、requestId、publicKeyHash、expiresAt、consumedAt、nodeId |
-| commands | commandId、nodeId、idempotencyKey、intentHash、operation、resourceVersion、state、revision、expiresAt、resultRef |
+| commands | commandId、nodeId、nodeIncarnation、fenceVersion、idempotencyKey、requestFingerprint、intentHash、operation、resourceVersion、state、lastKnownExecutionState、cancelIntent、reconcileState、sideEffectExtent、evidenceRefs、cancelIneffective、revision、expiresAt、resultRef |
+| idempotency_receipts | tenantId、idempotencyKey、requestFingerprint、intentHash、commandId、expiresAt、retainedUntil、guardUntil、replayCount、status；正文可清理但 guardUntil 前禁止复用同 key |
 | outbox | eventId、entityId、entityRevision、kind、availableAt、attempts、claimToken、claimUntil、publishedAt、lastError |
 | command_events | eventId 唯一、commandId、nodeIncarnation、agentEventSequence、state、evidenceHash、applyState、appliedRevision、receivedAt |
 | terminal_sessions | terminalId、nodeId、userId、authSessionId、authorizationVersion、relayId、state、revision、createdAt |
 | artifacts | artifactId、tenantId、nodeId、objectKey、bytes、sha256、state、retentionUntil |
 | audit_events | auditId、actorId、authMethod、tenantId、nodeId、operation、targetId、outcome、traceId |
 
-AgentConn SQLite 保存 activeEpoch、activeConnection、dispatchCursor、pendingCommands、dispatchAttempts 与 pendingResultEvents。Relay SQLite 保存 immutableBinding、roleTickets、activeRoleGeneration、leaseSequence、leaseUntil 与 revokeVersion。agent journal 保存 commandId、intentHash、operationClass、acceptEpoch、state、checkpoint、processIdentity、resultHash 和回执确认状态。事件序号在 `(nodeIncarnation, commandId)` 域内单调递增，同域同序号的摘要必须一致。command_events 的 applyState 区分 PENDING、APPLIED、CONSISTENT_NOOP 与 CONFLICT。
+AgentConn SQLite 保存 activeEpoch、activeConnection、dispatchCursor、pendingCommands、dispatchAttempts 与 pendingResultEvents。Relay SQLite 保存 immutableBinding、roleTickets、activeRoleGeneration、leaseSequence、leaseUntil 与 revokeVersion。agent journal 保存 commandId、intentHash、operationClass、acceptEpoch、state、checkpoint、processIdentity、resultHash、effectGuardUntil 和回执确认状态；对非幂等或破坏性操作，在 `effectGuardUntil` 前以 `(operation, intentHash)` 做节点侧效果去重。事件序号在 `(nodeIncarnation, commandId)` 域内单调递增，同域同序号的摘要必须一致。command_events 的 applyState 区分 PENDING、APPLIED、CONSISTENT_NOOP 与 CONFLICT。
 
 节点 journal 另存 executorKind、localTaskId、operationMarker、dispatchPhase 和执行器版本，用唯一 cloudCommandId 关联原 Go 任务。优先将稳定操作标识传入执行器，或增加可按标识查询的 hook。Go 已启动、但 connector 尚未持久保存 taskId 就退出时，恢复只能查询任务与现场；证据不足进入 UNCERTAIN，不再次调用原非幂等接口。
 
@@ -655,7 +681,7 @@ AgentConn SQLite 保存 activeEpoch、activeConnection、dispatchCursor、pendin
 | `GET /v1/agents/connect` | WSS Upgrade，路由到已绑定节点的 AgentConn |
 | `POST /nodes/{nodeId}/disable` | 停止新授权、提升相关版本并触发撤销；保留既有任务对账 |
 | `POST /nodes/{nodeId}/retire` | 创建可追踪退役流程，执行任务核对与保留清理策略 |
-| `POST /nodes/{nodeId}/commands` | 接受命令意图，返回 HTTP 202 与 commandId |
+| `POST /nodes/{nodeId}/commands` | 接受命令意图，返回 HTTP 202、commandId 与 `idempotencyReplay` |
 | `GET /commands/{commandId}` | 返回状态、revision、证据和可用操作 |
 | `POST /commands/{commandId}/cancel` | 提交取消意图，返回可追踪状态 |
 | `POST /nodes/{nodeId}/terminals` | 创建终端会话并返回浏览器角色 ticket |
@@ -669,9 +695,11 @@ AgentConn SQLite 保存 activeEpoch、activeConnection、dispatchCursor、pendin
 
 创建命令要求 `Idempotency-Key`。同 tenant、同 key、同 intentHash 返回原 commandId，同 key 不同摘要返回 HTTP 409。敏感操作采用资源 revision 前置条件，冲突时返回当前 revision。操作能力从服务端和 agent 的共同 capability 集合中选择。
 
+命令创建和重试响应统一返回 `idempotencyReplay`：首次创建为 `false`，命中仍有效的幂等收据为 `true`；命中过期 key guard 返回 410，不产生新命令。客户端必须保存原始 body、resourceVersion 和服务端返回的 expiresAt，不能通过刷新参数复用旧 key。
+
 ## A.5. 命令状态、幂等与本地 journal
 
-云端持久化命令意图后可以显示 QUEUED。AgentConn 首次发送前调用 TenantData.beginDispatch，原子校验命令仍可投递、有效期、取消状态和写入代次，将租户 D1 状态推进 DISPATCHED 并记录 dispatchAttempt。取得这一持久准入后，再保存 DO 本地投递记录并发送。D1 不可用时暂停新的首次投递，已准入命令按原 commandId 对账。QUEUED 的取消与过期操作通过同一状态 CAS 竞争，防止 DO 已发送而云端仍按未投递结束任务。agent 在 journal 事务中写入 RECEIVED 并确保持久化后才回复 accepted。重复 commandId 先核对完整 intentHash，然后返回已记录状态。相同 ID 携带不同 intentHash 时拒绝并产生审计。agent 使用状态 CAS 与资源锁保证同一命令只有一个本地 dispatcher 启动，取得资源锁后再次核对当前资源版本、节点 incarnation、epoch、授权与业务有效期，前置条件冲突时停止启动并返回证据。
+云端持久化命令意图后可以显示 QUEUED。AgentConn 首次发送前调用 TenantData.beginDispatch，原子校验命令仍可投递、有效期、取消状态、命令 `fenceVersion` 与节点当前写入代次，将租户 D1 状态推进 DISPATCHED 并记录 dispatchAttempt。取得这一持久准入后，再保存 DO 本地投递记录并发送。D1 不可用时暂停新的首次投递，已准入命令按原 commandId 对账。QUEUED 的取消与过期操作通过同一状态 CAS 竞争，防止 DO 已发送而云端仍按未投递结束任务。agent 在 journal 事务中写入 RECEIVED 并确保持久化后才回复 accepted。重复 commandId 先核对完整 intentHash，然后返回已记录状态。相同 ID 携带不同 intentHash 时拒绝并产生审计。agent 使用状态 CAS 与资源锁保证同一命令只有一个本地 dispatcher 启动，取得资源锁后再次核对当前资源版本、节点 incarnation、epoch、授权与业务有效期，前置条件冲突时停止启动并返回证据。
 
 准入前的权限或参数失败直接返回 4xx。命令已持久化后，节点只有在确认未启动且业务前置条件不满足时，才能持久回传 REJECTED，附错误码、拒绝原因和未执行证据；可从 DISPATCHED、RECEIVED 或 RECONCILING 合并到该终态。旧 epoch、乱序帧等传输拒绝仅结束该投递尝试，不能自动终结仍可在当前有效连接执行的业务命令。执行适配器与实际 Go 启动入口共同落实校验、锁和操作标记。
 
@@ -680,18 +708,25 @@ stateDiagram-v2
     [*] --> QUEUED
     QUEUED --> DISPATCHED: 先持久投递尝试
     DISPATCHED --> REJECTED: 节点证实未启动且业务拒绝
+    DISPATCHED --> EXPIRED: 节点证实未启动且已过期
     RECEIVED --> REJECTED: 启动前业务条件拒绝
     RECONCILING --> REJECTED: 核实未启动且已拒绝
     DISPATCHED --> RECEIVED: agent journal 持久化并确认
     DISPATCHED --> RECONCILING: 确认超时或业务期限到达
+    RECEIVED --> RECONCILING: 失联或结果确认超时
+    RUNNING --> RECONCILING: 失联或结果确认超时
+    CANCEL_REQUESTED --> RECONCILING: 取消结果确认超时
     RECONCILING --> RECEIVED: agent 证实已接收未启动
     RECONCILING --> RUNNING: agent 证实正在执行
     RECONCILING --> SUCCEEDED: 证实已成功
     RECONCILING --> FAILED: 证实已失败
     RECONCILING --> EXPIRED: agent 证实未启动且已过期
+    RECONCILING --> CANCELLED: 证实未启动且取消完成
     RECONCILING --> UNCERTAIN: 无法判定执行结果
     RECEIVED --> EXPIRED: agent确认启动前已过期
     QUEUED --> CANCELLED: 无投递历史且取消已持久化
+    DISPATCHED --> CANCEL_REQUESTED: 接受取消意图
+    RECEIVED --> CANCEL_REQUESTED: 接受取消意图
     RECEIVED --> RUNNING: 本地状态检查与资源锁
     RUNNING --> SUCCEEDED: 结果与验证证据落盘
     RUNNING --> FAILED: 明确失败结果落盘
@@ -703,10 +738,18 @@ stateDiagram-v2
     CANCEL_REQUESTED --> SUCCEEDED: 已完成且结果可核实
     CANCEL_REQUESTED --> FAILED: 操作返回明确失败
     CANCEL_REQUESTED --> UNCERTAIN: 停止与结果均无法判定
+    CANCEL_REQUESTED --> REVIEW_REQUIRED: 取消与完成竞争无法安全判定
+    RECONCILING --> REVIEW_REQUIRED: 证据冲突或人工待决
     UNCERTAIN --> SUCCEEDED: 只读核对证实完成
     UNCERTAIN --> FAILED: 核对证实失败
     UNCERTAIN --> REVIEW_REQUIRED: 无法安全判定
+    REVIEW_REQUIRED --> SUCCEEDED: 人工处置且证据证实完成
+    REVIEW_REQUIRED --> FAILED: 人工处置且证据证实失败
 ```
+
+图中的 `REVIEW_REQUIRED` 是自动状态机的终止闸门；只有具备人工处置权限、处置依据和审计记录时，才允许沿两条人工边生成最终结论。`CONFLICT` 不是命令状态，而是 `command_events.apply_state`，不能出现在状态列或状态图中。转移表、CAS 合并函数和本图必须由同一份版本化状态定义生成或逐项对照，新增边不能只改图。
+
+状态定义的机器可读基线保存在 [`docs/command-state.json`](command-state.json)。构建检查会逐边比对该文件与本图；人工边仍需经过权限、证据和审计校验，不能因为出现在 fixture 中而自动放行。
 
 执行器将操作分为只读、可验证的目标状态变更、带外部幂等键的操作、非幂等或破坏性操作。每类声明恢复策略、可核对证据、取消边界和补偿能力。创建目录可核对目标状态，服务重启可核对运行状态与进程证据，数据库恢复或磁盘操作可能需要检查专属 checkpoint。进程身份同时记录启动时间或操作标记，避免仅凭复用的 PID 判断。
 
@@ -718,7 +761,7 @@ stateDiagram-v2
 
 ## A.6. D1 outbox、至少一次通知与跨服务一致性
 
-控制 Worker 调用 TenantData Worker，将 commands、初始审计和 outbox 事件放入同一租户 D1 的 `batch()`。任何 SQL 失败时整批回滚。条件更新零行不触发回滚，凡涉及 revision CAS、取消或撤销的派生 outbox 与审计，都使用同一赢家请求与新 revision guard 的条件 INSERT SELECT，并验证结果行数，确保只有胜出状态转换生成事件。提交成功后返回 commandId，并立即触发 outbox dispatcher 的快速投递；该唤醒允许失败，持久 outbox 仍由补偿扫描恢复。dispatcher 经 claim 领取后向 Queues 发布。发布成功但 publishedAt 尚未更新就退出时允许重复发布，消费者按 eventId 和 commandId 去重。[D1 事务批处理](https://developers.cloudflare.com/d1/worker-api/d1-database/)、[Queues 交付语义](https://developers.cloudflare.com/queues/reference/delivery-guarantees/)
+控制 Worker 调用 TenantData Worker，将 commands、初始审计和 outbox 事件放入同一租户 D1 的 `batch()`。任何 SQL 失败时整批回滚。条件更新零行不触发回滚，凡涉及 revision CAS、取消或撤销的派生 outbox 与审计，都使用同一赢家请求与新 revision guard 的条件 INSERT SELECT，并验证结果行数，确保只有胜出状态转换生成事件。提交成功后返回 commandId，并尝试以有界超时直接调用对应 AgentConn 的 `dispatchKick` 快路径；该调用只负责唤醒和触发 `beginDispatch`，不取代 D1 中已经提交的 outbox。直连失败或超时不改变命令意图，outbox dispatcher 仍经 Queues 发布以完成持久补偿。发布成功但 publishedAt 尚未更新就退出时允许重复发布，消费者按 eventId、commandId 和 DO 侧投递版本去重。[D1 事务批处理](https://developers.cloudflare.com/d1/worker-api/d1-database/)、[Queues 交付语义](https://developers.cloudflare.com/queues/reference/delivery-guarantees/)
 
 ```mermaid
 sequenceDiagram
@@ -737,17 +780,7 @@ sequenceDiagram
     D-->>T: 原子提交成功
     T-->>U: commandId 与 revision
     U-->>B: 返回 commandId
-    U->>O: 有界即时 kick 可丢失提示
-    O->>T: 申请 outbox claim
-    T->>D: CAS 写 claimToken 并 RETURNING
-    D-->>T: 本次赢得的事件
-    T-->>O: 事件与 claimToken
-    O->>Q: 发布 eventId 与 commandId
-    Q->>X: 至少一次通知
-    X->>C: 内部 RPC 投递
-    C->>C: 持久接收投递意图
-    C-->>X: 接收确认
-    X-->>Q: ACK 通知
+    T->>C: 有界 dispatchKick(commandId,eventId,revision)
     C->>T: beginDispatch 校验授权 期限 取消与写入代次
     T->>D: CAS 持久 DISPATCHED 与 dispatchAttempt
     D-->>T: 准入结果
@@ -766,6 +799,19 @@ sequenceDiagram
     else PENDING 或 CONFLICT
         T-->>C: 保留事件并重试或核对
         C->>C: 保留未确认结果
+    end
+    par 持久补偿路径
+    O->>T: 申请 outbox claim
+    T->>D: CAS 写 claimToken 并 RETURNING
+    D-->>T: 本次赢得的事件
+    T-->>O: 事件与 claimToken
+    O->>Q: 发布 eventId 与 commandId
+    Q->>X: 至少一次通知
+    X->>C: 内部 RPC 投递
+    C->>C: 持久接收投递意图
+    C-->>X: 接收确认
+    X-->>Q: ACK 通知
+    X->>C: recoveryKick；同一 commandId/eventId 去重
     end
 ```
 
@@ -832,7 +878,7 @@ sequenceDiagram
 
 agent 保存最近 1 MiB 或 30 秒的终端输出用于短暂断线恢复，先到上限者优先。恢复请求携带最后已消费输出序号。超出保留窗口时显示明确的历史缺口，由用户选择重绘、重新进入全屏程序或新建终端，产品不能保证自动恢复 vim 等程序的完整屏幕状态。对于确认状态未知的输入，客户端不会自动重放按键或整条 shell 命令，以免重复执行。终端恢复与任务执行恢复分别处理。
 
-建议增加以下初始容量边界，并在压测中调整。单条结果内联正文上限 64 KiB，较大输出写 R2 或 agent 日志对象。每节点待投递上限为 1,000 条或 8 MiB，先到者触发限流。AgentConn 未确认结果持久缓存上限 64 MiB，高水位 48 MiB 时暂停新普通任务，保留结果确认、撤销、取消、健康恢复与对账通道。agent 为 journal 维护至少 50 MiB 的应急磁盘余量，接近阈值时拒绝新副作用任务并继续保存已有任务的最终状态。容量不足不能通过删除未确认结果或未过期 tombstone 来释放空间。正文、恢复元数据与去重 tombstone 分开设置保留策略。
+建议增加以下初始容量边界，并在压测中调整。单条结果内联正文上限 64 KiB，较大输出写 R2 或 agent 日志对象。每节点待投递上限为 1,000 条或 8 MiB，先到者触发限流。AgentConn 未确认结果持久缓存上限 64 MiB，高水位 48 MiB 时暂停新普通任务，保留结果确认、撤销、取消、健康恢复与对账通道；这两个数是应用预算，不是 Durable Objects 的平台上限。SQLite-backed DO Paid 单对象存储上限为 10GB、单行/键值上限为 8MB，收到的单条 WebSocket 消息上限为 32MiB，单对象约 1,000 req/s 是软上限；结果按低于 8MB 的记录或对象分块保存。agent 为 journal 维护至少 50 MiB 的应急磁盘余量，接近阈值时拒绝新副作用任务并继续保存已有任务的最终状态。DO 达到存储上限时写入失败但读取和 DELETE 仍可用，故障处理应先暂停普通写入、保留确认与撤销通道，再按保留策略清理可删除数据。容量不足不能通过删除未确认结果或未过期 tombstone 来释放空间。正文、恢复元数据与去重 tombstone 分开设置保留策略。[Durable Objects 限制](https://developers.cloudflare.com/durable-objects/platform/limits/)
 
 控制连接建议由 agent 每 30 秒发送 WebSocket 协议 ping，Cloudflare 自动应答且不唤醒 DO。固定字符串应用 ping/pong 可用 `setWebSocketAutoResponse`。业务健康建议每 60 秒汇报一次摘要，用户打开监控页时按订阅短时提高频率。在线状态区分 transportConnected、agentHealthy、lastSeenAt 和 stale，平台自动 pong 只代表连接通路可用。[DO 心跳与休眠](https://developers.cloudflare.com/durable-objects/best-practices/websockets/)、[自动应答 API](https://developers.cloudflare.com/durable-objects/api/state/)
 
@@ -980,7 +1026,7 @@ core 提供静态前端、统一中间件、`/api/v2/core/*` 控制接口及 `/m
 
 - `/mcp` 入口接受多种HTTP方法，先做MCP认证并签发access proof，再转发本机runtime。新方案需在云端MCP入口和节点runtime之间保留授权与来源绑定。[core/init/router/mcp.go](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/core/init/router/mcp.go)
 
-- agent的 `/internal/mcp/docker` 与 `/internal/mcp/website` 限定 master 模式及 Unix transport，另有独立capabilities入口。connector需把内部控制命令映射到显式允许的通道，保留这些接口的访问边界。[agent/init/router/mcp_runtime.go](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/agent/init/router/mcp_runtime.go) [agent/init/router/mcp_runtime.go](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/agent/init/router/mcp_runtime.go)
+- agent的 `/internal/mcp/docker` 与 `/internal/mcp/website` 限定 master 模式及 Unix transport，另有独立capabilities入口。connector需把内部控制命令映射到显式允许的通道，保留这些接口的访问边界。[agent MCP runtime 入口](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/agent/init/router/mcp_runtime.go)
 
 - agent另注册 `/api/v2/health/check` 和内部终端capabilities/revoke。健康检查、能力探测、撤销命令属于节点控制协议。[agent/init/router/router.go](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/agent/init/router/router.go) [agent/router/ro_host.go](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/agent/router/ro_host.go)
 
@@ -1006,7 +1052,7 @@ core 提供静态前端、统一中间件、`/api/v2/core/*` 控制接口及 `/m
 
 ### B.5.3 身份、授权与终端
 
-core当前负责会话/API认证、CSRF、密码过期、操作日志和代理策略。代理前清理终端/MCP身份头，再从已认证上下文注入身份，并阻断内部接口。新边缘认证层及connector需要完整承接这一信任链。设计上将 tenant_id、node_id、principal_id、session_id、operation_id、action、expiry 绑定到授权票据，节点校验目标及权限。[core/init/router/router.go](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/core/init/router/router.go) [core/init/router/proxy.go](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/core/init/router/proxy.go) [core/init/router/proxy.go](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/core/init/router/proxy.go) [core/init/router/proxy.go](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/core/init/router/proxy.go)
+core当前负责会话/API认证、CSRF、密码过期、操作日志和代理策略。代理前清理终端/MCP身份头，再从已认证上下文注入身份，并阻断内部接口。新边缘认证层及connector需要完整承接这一信任链。设计上将 tenant_id、node_id、principal_id、session_id、operation_id、action、expiry 绑定到授权票据，节点校验目标及权限。[core router](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/core/init/router/router.go)、[proxy handler](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/core/init/router/proxy.go)
 
 现有会话由进程内map保存，最大条目数1024。新控制面需将会话状态迁至可持久且可撤销的存储。现有API Key HMAC签名内容只包含固定前缀和timestamp，连接协议若需要绑定method/path/body、目标节点和防重放信息，应设计独立的规范化签名或短期票据。[core/init/session/psession/psession.go](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/core/init/session/psession/psession.go) [core/app/auth/api_auth.go](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/core/app/auth/api_auth.go)
 
@@ -1111,10 +1157,13 @@ CREATE TABLE nodes (
     node_id TEXT NOT NULL,
     incarnation TEXT NOT NULL,
     credential_version INTEGER NOT NULL DEFAULT 1,
+    management_mode TEXT NOT NULL DEFAULT 'CLOUD_MANAGED',
+    fence_version INTEGER NOT NULL DEFAULT 1,
     revision INTEGER NOT NULL DEFAULT 1,
     status TEXT NOT NULL,
     PRIMARY KEY (tenant_id, node_id),
-    CHECK (credential_version > 0 AND revision > 0)
+    CHECK (credential_version > 0 AND fence_version > 0 AND revision > 0),
+    CHECK (management_mode IN ('CLOUD_MANAGED', 'LOCAL_MAINTENANCE', 'POLICY_SCHEDULER'))
 );
 
 CREATE TABLE commands (
@@ -1122,24 +1171,56 @@ CREATE TABLE commands (
     command_id TEXT NOT NULL,
     node_id TEXT NOT NULL,
     node_incarnation TEXT NOT NULL,
+    fence_version INTEGER NOT NULL,
     idempotency_key TEXT NOT NULL,
+    request_fingerprint TEXT NOT NULL,
     intent_hash TEXT NOT NULL,
     operation TEXT NOT NULL,
     payload_json TEXT NOT NULL,
     state TEXT NOT NULL,
+    last_known_execution_state TEXT NOT NULL DEFAULT 'NOT_STARTED',
+    cancel_intent TEXT NOT NULL DEFAULT 'NONE',
+    reconcile_state TEXT NOT NULL DEFAULT 'NOT_REQUIRED',
+    side_effect_extent TEXT NOT NULL DEFAULT 'NONE',
+    evidence_refs_json TEXT NOT NULL DEFAULT '[]',
+    cancel_ineffective INTEGER NOT NULL DEFAULT 0,
     revision INTEGER NOT NULL DEFAULT 1,
     created_at INTEGER NOT NULL,
     expires_at INTEGER NOT NULL,
     dispatch_started_at INTEGER,
     result_ref TEXT,
     PRIMARY KEY (tenant_id, command_id),
-    UNIQUE (tenant_id, idempotency_key),
     FOREIGN KEY (tenant_id, node_id)
         REFERENCES nodes (tenant_id, node_id),
-    CHECK (revision > 0 AND expires_at > created_at)
+    CHECK (fence_version > 0 AND revision > 0 AND expires_at > created_at),
+    CHECK (side_effect_extent IN ('NONE', 'PARTIAL', 'FULL')),
+    CHECK (last_known_execution_state IN ('NOT_STARTED', 'RECEIVED', 'RUNNING', 'SUCCEEDED', 'FAILED', 'CANCELLED', 'UNKNOWN')),
+    CHECK (cancel_intent IN ('NONE', 'REQUESTED', 'ACCEPTED', 'REJECTED', 'INEFFECTIVE')),
+    CHECK (reconcile_state IN ('NOT_REQUIRED', 'PENDING', 'IN_PROGRESS', 'RESOLVED', 'MANUAL')),
+    CHECK (cancel_ineffective IN (0, 1))
 );
 CREATE INDEX commands_by_node_state
     ON commands (tenant_id, node_id, state, created_at, command_id);
+
+CREATE TABLE idempotency_receipts (
+    tenant_id TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL,
+    request_fingerprint TEXT NOT NULL,
+    intent_hash TEXT NOT NULL,
+    command_id TEXT NOT NULL,
+    expires_at INTEGER NOT NULL,
+    retained_until INTEGER NOT NULL,
+    guard_until INTEGER NOT NULL,
+    replay_count INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'ACTIVE',
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (tenant_id, idempotency_key),
+    UNIQUE (tenant_id, command_id),
+    FOREIGN KEY (tenant_id, command_id)
+        REFERENCES commands (tenant_id, command_id),
+    CHECK (retained_until >= expires_at AND guard_until >= retained_until AND replay_count >= 0),
+    CHECK (status IN ('ACTIVE', 'KEY_GUARD_ONLY', 'REVOKED'))
+);
 
 CREATE TABLE command_events (
     tenant_id TEXT NOT NULL,
@@ -1181,6 +1262,8 @@ CREATE INDEX outbox_ready
 
 时间字段使用 UTC epoch 毫秒，事件顺序使用有界整数。进入 JavaScript API 的序号采用十进制字符串，读取时对序号使用 SQL CAST AS TEXT 投影，避免大整数精度损失。命令状态转换由数据 Worker 的合并函数校验，revision CAS、event applyState 和 outbox 写入置于同一原子批次，并以操作结果断言验证预期转换。
 
+`commands` 记录在其关联 `idempotency_receipts` 或破坏性效果去重窗口结束前不得物理删除；归档只能转入保留状态并保留原 `commandId`、`intentHash`、`expiresAt` 和最终状态。这样既保留外键和唯一 key guard，也避免收据清理后旧请求被静默当作新命令。
+
 外键的删除策略采用显式业务清理，节点进入退役状态后先完成命令、终端和审计保留处理。eventId 相同而 contentHash 不同属于协议冲突，进入审计与核对。applyState 为 PENDING 或 CONFLICT 时继续保留事件并重试或人工核验，只有 APPLIED 或经过验证的一致 CONSISTENT_NOOP 才产生 result.committed。
 
 ## C.2 operation registry 初始示例
@@ -1194,6 +1277,7 @@ CREATE INDEX outbox_ready
 | backup.restore | backup.restore，Admin | 备份可读、目标版本、恢复窗口和资源锁 | 恢复点/checkpoint核对，结果不明时进入人工检查 |
 | host.reboot | host.reboot，Admin | 已确认业务影响与任务排空策略 | 以boot identity及恢复健康确认，连接断开显示重启中 |
 | disk.format | disk.destructive，受限Admin | 目标设备稳定标识、签名操作意图、二次业务确认 | 不自动重放，断电后核对真实设备与文件系统证据 |
+| terminal.open | terminal.open，Operator | 终端角色票据、节点能力、租约和每节点终端配额 | 关闭会话或租约到期；未知 stdin 不自动重放 |
 
 表中的权限、能力名称和确认规则为拟实施产品协议。真实映射依据附录 B 的 Go 处理器逐项建立，不能用一个通用任意命令代理替代全部业务约束。 每条记录同时指定稳定的 localTaskId 或 operationMarker 接入方式、实际执行前检查位置和结果核对入口。候选系统 OTA 的 operation 仅在附录 E 的适用设备与发布范围冻结后启用，不能通过通用 shell 绕过升级排他与未知结果处理。
 
@@ -1239,18 +1323,20 @@ REQ 是产品追踪编号，不替代附录 B 的路由组和逐端点台账。�
 
 验收记录区分设计、实现未验证、验证通过与正式接受；每次结论标注源码版本、环境和证据。首版至少覆盖两租户两节点的真实业务纵切，模拟器结果与真实节点结果分别记录，范围缺口不得自动解释为已完成。
 
-| 需求 | 产品交付与完成条件 | 对应范围 / 阶段 |
-|---|---|---|
-| REQ01 身份与权限 | 登录、会话、成员和节点授权可撤销；深链接同样鉴权 | §10、§13.1、B.3 / P0–P1、P3 |
-| REQ02 设备生命周期 | DEV01–DEV08 可操作、可诊断；连接与健康分开展示 | B.5.1、附录 A.2 / P1–P5 |
-| REQ03 任务与审计 | commandId 跨页追踪，关联本地 taskId；失败、取消与未知结果不混用 | §8、§13.5、B.5.4 / P2–P3 |
-| REQ04 终端与实时流 | 主机、SSH、容器 exec、日志及 console 按能力开放；租约与断线行为可验证 | §9、B.5.3 / P3–P4 |
-| REQ05 文件与资源传输 | 文件操作、分片传输、分享和备份制品可校验、取消及清理 | §11、§13.2、B.4 / P3–P4 |
-| REQ06 主机可观测与工具 | 概览、监控、日志、进程、防火墙和系统工具保留适用能力 | §13.2、B.4 / P2、P4 |
-| REQ07 应用与运行资源 | 容器、应用、网站、运行环境和数据库真实完成操作及失败恢复 | §13.2、B.4 / P4 |
-| REQ08 计划与配置 | 脚本、常用命令、计划、证书和告警有配置版本与应用回执；离线策略明确 | §13.4、B.3–B.4 / P3–P4 |
-| REQ09 VM、AI 与 MCP | 按公开 provider 与实际硬件验收；私有缺口显式处置，MCP 不绕过授权 | §13.2、B.5.6–B.7 / P4 |
-| REQ10 安装与恢复 | 保留 core 的安装、升级、回滚、快照、数据迁移和退役闭环 | §12、B.5.5 / P5 |
+| 需求 | 产品交付与完成条件 | 对应范围 / 阶段 | AC / FI / CAP / NET 证据 |
+|---|---|---|---|
+| REQ01 身份与权限 | 登录、会话、成员和节点授权可撤销；深链接同样鉴权 | §10、§13.1、B.3 / P0–P1、P3 | AC-AUTH、FI-AUTH、CAP-03、NET-AUTH |
+| REQ02 设备生命周期 | DEV01–DEV08 可操作、可诊断；连接与健康分开展示 | B.5.1、附录 A.2 / P1–P5 | AC-LIFE、FI-LIFE、CAP-04、NET-REG |
+| REQ03 任务与审计 | commandId 跨页追踪，关联本地 taskId；失败、取消与未知结果不混用 | §8、§13.5、B.5.4 / P2–P3 | AC-CMD、FI-CMD、CAP-01、NET-CMD |
+| REQ04 终端与实时流 | 主机、SSH、容器 exec、日志及 console 按能力开放；租约与断线行为可验证 | §9、B.5.3 / P3–P4 | AC-TERM、FI-TERM、CAP-02、NET-TERM |
+| REQ05 文件与资源传输 | 文件操作、分片传输、分享和备份制品可校验、取消及清理 | §11、§13.2、B.4 / P3–P4 | AC-FILE、FI-FILE、CAP-02、NET-R2 |
+| REQ06 主机可观测与工具 | 概览、监控、日志、进程、防火墙和系统工具保留适用能力 | §13.2、B.4 / P2、P4 | AC-HOST、FI-HOST、CAP-01、NET-AGENT |
+| REQ07 应用与运行资源 | 容器、应用、网站、运行环境和数据库真实完成操作及失败恢复 | §13.2、B.4 / P4 | AC-APP、FI-APP、CAP-01、NET-AGENT |
+| REQ08 计划与配置 | 脚本、常用命令、计划、证书和告警有配置版本与应用回执；离线策略明确 | §13.4、B.3–B.4 / P3–P4 | AC-LIFE、FI-CONFIG、CAP-04、NET-POLICY |
+| REQ09 VM、AI 与 MCP | 按公开 provider 与实际硬件验收；私有缺口显式处置，MCP 不绕过授权 | §13.2、B.5.6–B.7 / P4 | AC-MCP、FI-AUTH、CAP-01、NET-MCP |
+| REQ10 安装与恢复 | 保留 core 的安装、升级、回滚、快照、数据迁移和退役闭环 | §12、B.5.5 / P5 | AC-RECOVERY、FI-RECOVERY、CAP-04、NET-R2 |
+| REQ11 容量与恢复余量 | 单租户 10,000 节点、D1/DO/Queue 水位、归档和恢复余量分别有实测门禁 | §15.1、§15.3.5 / P0–P5 | AC-CAP、FI-CAP、CAP-01–04、NET-CAP |
+| REQ12 链路可达性与延迟 | API、Relay、R2、包源及国内/海外路径按可达性、延迟和失败切换验收 | §9、§15.3.7 / P0–P4 | AC-NET、FI-NET、CAP-02、NET-01–04 |
 
 ## D.4 设备状态与 DEV 验收矩阵
 

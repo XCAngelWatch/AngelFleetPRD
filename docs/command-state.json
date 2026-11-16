@@ -1,0 +1,188 @@
+{
+  "schemaVersion": 1,
+  "states": [
+    "QUEUED",
+    "DISPATCHED",
+    "REJECTED",
+    "EXPIRED",
+    "RECEIVED",
+    "RECONCILING",
+    "RUNNING",
+    "CANCEL_REQUESTED",
+    "SUCCEEDED",
+    "FAILED",
+    "CANCELLED",
+    "UNCERTAIN",
+    "REVIEW_REQUIRED"
+  ],
+  "terminalStates": [
+    "SUCCEEDED",
+    "FAILED",
+    "CANCELLED",
+    "EXPIRED",
+    "REJECTED",
+    "REVIEW_REQUIRED"
+  ],
+  "manualTransitions": [
+    "REVIEW_REQUIRED->SUCCEEDED",
+    "REVIEW_REQUIRED->FAILED"
+  ],
+  "transitions": [
+    {
+      "from": "QUEUED",
+      "to": "DISPATCHED"
+    },
+    {
+      "from": "DISPATCHED",
+      "to": "REJECTED"
+    },
+    {
+      "from": "DISPATCHED",
+      "to": "EXPIRED"
+    },
+    {
+      "from": "RECEIVED",
+      "to": "REJECTED"
+    },
+    {
+      "from": "RECONCILING",
+      "to": "REJECTED"
+    },
+    {
+      "from": "DISPATCHED",
+      "to": "RECEIVED"
+    },
+    {
+      "from": "DISPATCHED",
+      "to": "RECONCILING"
+    },
+    {
+      "from": "RECEIVED",
+      "to": "RECONCILING"
+    },
+    {
+      "from": "RUNNING",
+      "to": "RECONCILING"
+    },
+    {
+      "from": "CANCEL_REQUESTED",
+      "to": "RECONCILING"
+    },
+    {
+      "from": "RECONCILING",
+      "to": "RECEIVED"
+    },
+    {
+      "from": "RECONCILING",
+      "to": "RUNNING"
+    },
+    {
+      "from": "RECONCILING",
+      "to": "SUCCEEDED"
+    },
+    {
+      "from": "RECONCILING",
+      "to": "FAILED"
+    },
+    {
+      "from": "RECONCILING",
+      "to": "EXPIRED"
+    },
+    {
+      "from": "RECONCILING",
+      "to": "CANCELLED"
+    },
+    {
+      "from": "RECONCILING",
+      "to": "UNCERTAIN"
+    },
+    {
+      "from": "RECEIVED",
+      "to": "EXPIRED"
+    },
+    {
+      "from": "QUEUED",
+      "to": "CANCELLED"
+    },
+    {
+      "from": "DISPATCHED",
+      "to": "CANCEL_REQUESTED"
+    },
+    {
+      "from": "RECEIVED",
+      "to": "CANCEL_REQUESTED"
+    },
+    {
+      "from": "RECEIVED",
+      "to": "RUNNING"
+    },
+    {
+      "from": "RUNNING",
+      "to": "SUCCEEDED"
+    },
+    {
+      "from": "RUNNING",
+      "to": "FAILED"
+    },
+    {
+      "from": "RUNNING",
+      "to": "UNCERTAIN"
+    },
+    {
+      "from": "QUEUED",
+      "to": "EXPIRED"
+    },
+    {
+      "from": "RECEIVED",
+      "to": "CANCELLED"
+    },
+    {
+      "from": "RUNNING",
+      "to": "CANCEL_REQUESTED"
+    },
+    {
+      "from": "CANCEL_REQUESTED",
+      "to": "CANCELLED"
+    },
+    {
+      "from": "CANCEL_REQUESTED",
+      "to": "SUCCEEDED"
+    },
+    {
+      "from": "CANCEL_REQUESTED",
+      "to": "FAILED"
+    },
+    {
+      "from": "CANCEL_REQUESTED",
+      "to": "UNCERTAIN"
+    },
+    {
+      "from": "CANCEL_REQUESTED",
+      "to": "REVIEW_REQUIRED"
+    },
+    {
+      "from": "RECONCILING",
+      "to": "REVIEW_REQUIRED"
+    },
+    {
+      "from": "UNCERTAIN",
+      "to": "SUCCEEDED"
+    },
+    {
+      "from": "UNCERTAIN",
+      "to": "FAILED"
+    },
+    {
+      "from": "UNCERTAIN",
+      "to": "REVIEW_REQUIRED"
+    },
+    {
+      "from": "REVIEW_REQUIRED",
+      "to": "SUCCEEDED"
+    },
+    {
+      "from": "REVIEW_REQUIRED",
+      "to": "FAILED"
+    }
+  ]
+}

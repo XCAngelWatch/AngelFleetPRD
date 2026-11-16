@@ -5,6 +5,13 @@ import { build } from 'esbuild';
 
 const source = await readFile('docs/technical-plan.md', 'utf8');
 const siteMeta = JSON.parse(await readFile('docs/site-meta.json', 'utf8'));
+async function removeAppleDoubleFiles(directory) {
+  for (const entry of await readdir(directory, {withFileTypes:true})) {
+    const path = `${directory}/${entry.name}`;
+    if (entry.name.startsWith('._')) await rm(path, {recursive:true, force:true});
+    else if (entry.isDirectory()) await removeAppleDoubleFiles(path);
+  }
+}
 const repo = 'https://github.com/XCAngelWatch/AngelFleetPRD';
 const site = 'https://xcangelwatch.github.io/AngelFleetPRD/';
 const escape = text => text.replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
@@ -15,7 +22,7 @@ md.renderer.rules.fence = (tokens,index,options,env,self) => {
   const token = tokens[index];
   if (token.info.trim() === 'mermaid') {
     const id = ++diagramCount;
-    return `<figure class="diagram"><div class="mermaid" data-diagram="${id}">${escape(token.content)}</div><details open><summary>查看流程源码</summary><pre><code>${escape(token.content)}</code></pre></details></figure>`;
+    return `<figure class="diagram"><div class="mermaid" data-diagram="${id}">${escape(token.content)}</div><details><summary>查看流程源码</summary><pre><code>${escape(token.content)}</code></pre></details></figure>`;
   }
   return `<div class="code-block"><button class="copy-code" type="button" aria-label="复制此段代码">复制代码</button>${fence(tokens,index,options,env,self)}</div>`;
 };
@@ -64,14 +71,22 @@ const rendered = sections.map(section => {
 const introHtml = md.render(intro);
 const searchRecords = [];
 let current = {id:'top',title};
-let cursor = 0;
-for (const chunk of body.split(/(?=^#{1,3} )/m)) {
-  const heading = chunk.match(/^#{1,3} (.+)/);
-  let text = chunk;
-  if (heading) { current = headings[cursor++] ?? current; text = chunk.slice(heading[0].length); }
-  text = text.replace(/```[\s\S]*?```/g, ' ').replace(/\[([^\]]+)\]\([^)]+\)/g,'$1').replace(/[`*#>|]/g,' ').replace(/\s+/g,' ').trim();
+let headingCursor = 0;
+let textParts = [];
+function flushSearchRecord() {
+  const text = textParts.join(' ').replace(/\[([^\]]+)\]\([^)]+\)/g,'$1').replace(/[`*#>|]/g,' ').replace(/\s+/g,' ').trim();
   if (text) searchRecords.push({id:current.id,title:current.title,text});
+  textParts = [];
 }
+for (const token of md.parse(body, {})) {
+  if (token.type === 'heading_open') {
+    flushSearchRecord();
+    current = headings[headingCursor++] ?? current;
+  } else if (token.type === 'inline' || token.type === 'paragraph_open' || token.type === 'list_item_open') {
+    if (token.type === 'inline') textParts.push(token.content);
+  }
+}
+flushSearchRecord();
 const navItems = rendered.map(({heading}) => {
   const isAppendix = heading.title.startsWith('附录');
   const number = isAppendix ? heading.title.match(/^附录 ([A-E])/)[1] : heading.title.match(/^\d+/)[0];
@@ -88,6 +103,7 @@ const html = `<!doctype html>
 <title>${escape(title)} · AngelFleet PRD</title>
 <meta name="description" content="AngelFleet PRD：1Panel v2 Cloudflare 控制面详细技术方案。XC React 前端复用、Go 功能迁移、节点协议与单租户 1 万节点验收基线。">
 <meta name="theme-color" content="#143b40"><meta property="og:title" content="${escape(title)}"><meta property="og:description" content="设计版本 ${escape(siteMeta.version)} · 完整功能迁移、产品生命周期与分阶段验收基线"><meta property="og:type" content="article"><meta property="og:url" content="${site}">
+<meta property="og:image" content="${site}assets/og-card.svg"><meta property="og:image:type" content="image/svg+xml"><meta name="twitter:card" content="summary"><meta name="twitter:title" content="${escape(title)}"><meta name="twitter:description" content="设计版本 ${escape(siteMeta.version)} · 完整功能迁移与分阶段验收基线">
 <link rel="canonical" href="${site}"><link rel="icon" type="image/svg+xml" href="assets/favicon.svg"><link rel="stylesheet" href="assets/site.css">
 </head>
 <body id="top">
@@ -126,7 +142,12 @@ await writeFile('dist/.nojekyll','');
 await copyFile('src/site.css','dist/assets/site.css');
 await copyFile('docs/technical-plan.md','dist/technical-plan.md');
 await copyFile('docs/operation-ledger.md','dist/operation-ledger.md');
+await copyFile('docs/command-state.json','dist/command-state.json');
 await writeFile('dist/assets/favicon.svg','<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="6" fill="#143b40"/><path d="M6 24 16 6l10 18H6Z" fill="none" stroke="#e7f4f4" stroke-width="2"/><path d="M11 18h10M16 18v9" stroke="#e7f4f4" stroke-width="2"/></svg>');
+await writeFile('dist/assets/og-card.svg',`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630"><rect width="1200" height="630" fill="#143b40"/><path d="M110 465 300 135l190 330H110Z" fill="none" stroke="#e7f4f4" stroke-width="18"/><path d="M205 370h190M300 370v110" stroke="#e7f4f4" stroke-width="18" stroke-linecap="round"/><text x="560" y="285" fill="#f4ffff" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','Microsoft YaHei',sans-serif" font-size="64" font-weight="700">AngelFleet PRD</text><text x="560" y="370" fill="#b9d8da" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','Microsoft YaHei',sans-serif" font-size="34">1Panel v2 Cloudflare 控制面 · v${escape(siteMeta.version)}</text><text x="560" y="430" fill="#b9d8da" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','Microsoft YaHei',sans-serif" font-size="24">公开技术方案与分阶段验收基线</text></svg>`);
+await writeFile('dist/robots.txt',`User-agent: *\nAllow: /\nSitemap: ${site}sitemap.xml\n`);
+await writeFile('dist/sitemap.xml',`<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>${site}</loc><lastmod>${siteMeta.publicationDate}</lastmod></url></urlset>\n`);
+await copyFile('dist/index.html','dist/404.html');
 const bundle = await build({entryPoints:['src/site.js','src/mermaid.js'],outdir:'dist/assets',bundle:true,splitting:true,format:'esm',minify:true,target:'es2022',legalComments:'linked',chunkNames:'chunks/[name]-[hash]',logLevel:'warning',metafile:true});
 await mkdir('dist/licenses',{recursive:true});
 const packages = new Set(Object.keys(bundle.metafile.inputs).filter(path => path.startsWith('node_modules/')).map(path => {
@@ -147,4 +168,5 @@ for (const name of [...packages].sort()) {
 await writeFile('dist/licenses/README.md',notices.join('\n')+'\n');
 const manifest = {version:siteMeta.version,baselineDate:siteMeta.baselineDate,publicationDate:siteMeta.publicationDate,status:siteMeta.status,sourceSha256:createHash('sha256').update(source).digest('hex'),chapters:rendered.map(({heading}) => ({id:heading.id,title:heading.title})),bodyChapters:mainNav.length,appendices:appendixNav.length,headings:headings.length,diagrams:diagramCount,diagramSources:(source.match(/^```mermaid$/gm) || []).length,searchRecords:searchRecords.length};
 await writeFile('dist/build-manifest.json',JSON.stringify(manifest,null,2)+'\n');
+await removeAppleDoubleFiles('dist');
 console.log(`Built ${rendered.length} chapters, ${headings.length} headings, ${diagramCount} diagrams and ${searchRecords.length} search sections.`);

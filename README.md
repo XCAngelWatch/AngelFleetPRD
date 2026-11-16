@@ -12,6 +12,7 @@
 
 - [完整技术方案](docs/technical-plan.md) 是内容源文件。
 - [Go 操作改造台账](docs/operation-ledger.md) 是 P0 起始清单，未标记为已完成。
+- [命令状态定义](docs/command-state.json) 是状态图与转移检查使用的机器可读基线。
 - [站点元数据](docs/site-meta.json) 是版本、审查基线和公开日期的唯一来源。
 - [在线文档站](https://xcangelwatch.github.io/AngelFleetPRD/) 支持章节导航、全文搜索、流程图、打印和 Markdown 下载。
 - 修改内容时编辑 `docs/technical-plan.md`；网站由构建脚本生成，勿直接修改 `dist/`。
