@@ -1,0 +1,89 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-16T07:10:29.824Z",
+  "title": "Design System: AngelFleet PRD",
+  "extensions": {
+    "colorMeta": {
+      "accent": {
+        "role": "primary",
+        "displayName": "Document teal"
+      },
+      "rail": {
+        "role": "navigation",
+        "displayName": "Deep teal rail"
+      },
+      "paper": {
+        "role": "neutral",
+        "displayName": "Reading paper"
+      }
+    },
+    "typographyMeta": {
+      "body": {
+        "displayName": "Chinese reading stack",
+        "purpose": "Long technical prose and reference tables."
+      }
+    },
+    "shadows": [
+      {
+        "name": "search-dialog",
+        "value": "0 18px 70px #10282c55",
+        "purpose": "Protected search focus."
+      }
+    ],
+    "motion": [
+      {
+        "name": "mobile-directory",
+        "value": "180ms ease-out",
+        "purpose": "Directory open and close; disabled for reduced motion."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "mobile",
+        "value": "760px"
+      },
+      {
+        "name": "compact",
+        "value": "1050px"
+      },
+      {
+        "name": "wide",
+        "value": "1500px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Search trigger",
+      "kind": "button",
+      "refersTo": "search-trigger",
+      "description": "Full-document search in the chapter rail.",
+      "html": "<button class=\"search-trigger\">搜索方案</button>",
+      "css": ".search-trigger{background:#235058;color:#f5ffff;border:1px solid #50747a;border-radius:6px;padding:10px 12px;font:13px -apple-system,BlinkMacSystemFont,sans-serif}.search-trigger:focus-visible{outline:3px solid #d98633;outline-offset:4px}"
+    }
+  ],
+  "narrative": {
+    "northStar": "A complete technical plan with reliable wayfinding.",
+    "overview": "A deep teal rail frames a calm white document column. Reading and reference tasks take priority over decorative presentation.",
+    "keyCharacteristics": [
+      "Persistent chapter location",
+      "Readable Chinese prose",
+      "Local diagrams and searchable references"
+    ],
+    "rules": [
+      {
+        "name": "Preserve evidence boundaries",
+        "body": "Design status must remain distinct from implementation and acceptance.",
+        "section": "typography"
+      }
+    ],
+    "dos": [
+      "Keep wide content inside scrollable regions",
+      "Preserve keyboard focus and reduced-motion behavior"
+    ],
+    "donts": [
+      "Do not use decorative animation behind reading content",
+      "Do not imply design publication proves capacity"
+    ]
+  }
+}
