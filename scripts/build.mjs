@@ -4,6 +4,7 @@ import MarkdownIt from 'markdown-it';
 import { build } from 'esbuild';
 
 const source = await readFile('docs/technical-plan.md', 'utf8');
+const siteMeta = JSON.parse(await readFile('docs/site-meta.json', 'utf8'));
 const repo = 'https://github.com/XCAngelWatch/AngelFleetPRD';
 const site = 'https://xcangelwatch.github.io/AngelFleetPRD/';
 const escape = text => text.replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
@@ -71,12 +72,14 @@ for (const chunk of body.split(/(?=^#{1,3} )/m)) {
   text = text.replace(/```[\s\S]*?```/g, ' ').replace(/\[([^\]]+)\]\([^)]+\)/g,'$1').replace(/[`*#>|]/g,' ').replace(/\s+/g,' ').trim();
   if (text) searchRecords.push({id:current.id,title:current.title,text});
 }
-const nav = rendered.map(({heading}) => {
+const navItems = rendered.map(({heading}) => {
   const isAppendix = heading.title.startsWith('附录');
   const number = isAppendix ? heading.title.match(/^附录 ([A-E])/)[1] : heading.title.match(/^\d+/)[0];
   const label = isAppendix ? heading.title.replace(/^附录 [A-E] · /,'') : heading.title.replace(/^\d+\. /,'');
-  return `<a href="#${heading.id}"><span class="section-number">${number}</span><span>${escape(label)}</span></a>`;
+  return {isAppendix, html:`<a href="#${heading.id}"><span class="section-number">${number}</span><span>${escape(label)}</span></a>`};
 });
+const mainNav = navItems.filter(item => !item.isAppendix).map(item => item.html);
+const appendixNav = navItems.filter(item => item.isAppendix).map(item => item.html);
 const searchIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></svg>';
 const html = `<!doctype html>
 <html lang="zh-CN">
@@ -84,30 +87,30 @@ const html = `<!doctype html>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${escape(title)} · AngelFleet PRD</title>
 <meta name="description" content="AngelFleet PRD：1Panel v2 Cloudflare 控制面详细技术方案。XC React 前端复用、Go 功能迁移、节点协议与单租户 1 万节点验收基线。">
-<meta name="theme-color" content="#143b40"><meta property="og:title" content="${escape(title)}"><meta property="og:description" content="设计版本 2.1 · 完整功能迁移、产品生命周期与分阶段验收基线"><meta property="og:type" content="article"><meta property="og:url" content="${site}">
+<meta name="theme-color" content="#143b40"><meta property="og:title" content="${escape(title)}"><meta property="og:description" content="设计版本 ${escape(siteMeta.version)} · 完整功能迁移、产品生命周期与分阶段验收基线"><meta property="og:type" content="article"><meta property="og:url" content="${site}">
 <link rel="canonical" href="${site}"><link rel="icon" type="image/svg+xml" href="assets/favicon.svg"><link rel="stylesheet" href="assets/site.css">
 </head>
 <body id="top">
 <a class="skip-link" href="#main">跳转到正文</a>
 <header class="masthead">
   <a href="#top" class="brand"><svg class="brand-mark" viewBox="0 0 32 32" fill="none" aria-hidden="true"><path d="M5 24 16 5l11 19H5Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="m10 19 6-10 6 10M10 19h12M16 19v8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>AngelFleet PRD</a>
-  <nav class="masthead-links" aria-label="文档操作"><span class="version">v2.1</span><a class="desktop-link" href="technical-plan.md" download>下载 Markdown</a><a class="desktop-link print-button" href="#">打印 / PDF</a><a href="${repo}">GitHub</a><button class="menu-toggle" aria-controls="contents" aria-expanded="false" type="button">目录</button></nav>
+  <nav class="masthead-links" aria-label="文档操作"><span class="version">v${escape(siteMeta.version)}</span><a class="desktop-link" href="technical-plan.md" download>下载 Markdown</a><a class="desktop-link print-button" href="#">打印 / PDF</a><a href="${repo}">GitHub</a><button class="menu-toggle" aria-controls="contents" aria-expanded="false" type="button">目录</button></nav>
 </header>
 <button class="nav-backdrop" hidden type="button" aria-label="关闭目录"></button>
 <div class="layout">
   <aside class="sidebar" id="contents" aria-label="章节目录">
     <button class="search-trigger" type="button">${searchIcon}<span>搜索方案</span><kbd>⌘ / Ctrl K</kbd></button>
-    <h2 class="contents-title">技术方案</h2><nav class="toc" aria-label="主体章节">${nav.slice(0,15).join('')}</nav>
-    <h2 class="contents-title">参考附录</h2><nav class="toc" aria-label="附录">${nav.slice(15).join('')}</nav>
-    <div class="sidebar-footer">设计基线 · 2026-11-12<br>公开发布 · 2026-11-16<br><a href="technical-plan.md" download>下载完整方案</a></div>
+    <h2 class="contents-title">技术方案</h2><nav class="toc" aria-label="主体章节">${mainNav.join('')}</nav>
+    <h2 class="contents-title">参考附录</h2><nav class="toc" aria-label="附录">${appendixNav.join('')}</nav>
+    <div class="sidebar-footer">设计基线 · ${escape(siteMeta.baselineDate)}<br>公开发布 · ${escape(siteMeta.publicationDate)}<br><a href="technical-plan.md" download>下载完整方案</a></div>
   </aside>
   <main class="article-wrap" id="main">
     <article class="document">
-      <header class="document-header"><div class="breadcrumb"><a href="${repo}">AngelFleet</a> / 技术方案</div><h1>${escape(title)}</h1><div class="document-meta"><span>设计版本 2.1</span><span>审查基线 2026-11-12</span><span class="design-status">实施设计 · 待分阶段验收</span></div></header>
+      <header class="document-header"><div class="breadcrumb"><a href="${repo}">AngelFleet</a> / 技术方案</div><h1>${escape(title)}</h1><div class="document-meta"><span>设计版本 ${escape(siteMeta.version)}</span><span>审查基线 ${escape(siteMeta.baselineDate)}</span><span class="design-status">${escape(siteMeta.status)}</span></div></header>
       <div class="intro">${introHtml}</div>
-      <div class="publication-note">本页发布于 2026-11-16，保留 2026-11-12 的代码审查与设计基线。方案公开不代表平台功能、真实节点链路或单租户容量验收已完成。</div>
+      <div class="publication-note">本页发布于 ${escape(siteMeta.publicationDate)}，保留 ${escape(siteMeta.baselineDate)} 的代码审查与设计基线。方案公开不代表平台功能、真实节点链路或单租户容量验收已完成。</div>
       ${rendered.map(({heading,html}) => `<section class="chapter" id="chapter-${heading.id}" aria-labelledby="${heading.id}">${html}</section>`).join('\n')}
-      <footer class="document-footer"><span>AngelFleet PRD · 设计版本 2.1</span><span><a href="technical-plan.md" download>下载 Markdown</a> · <a href="${repo}/blob/main/docs/technical-plan.md">查看源文档</a> · <a href="#top">返回文档开头</a></span></footer>
+      <footer class="document-footer"><span>AngelFleet PRD · 设计版本 ${escape(siteMeta.version)}</span><span><a href="technical-plan.md" download>下载 Markdown</a> · <a href="${repo}/blob/main/docs/technical-plan.md">查看源文档</a> · <a href="#top">返回文档开头</a></span></footer>
     </article>
   </main>
 </div>
@@ -122,6 +125,7 @@ await writeFile('dist/index.html',html);
 await writeFile('dist/.nojekyll','');
 await copyFile('src/site.css','dist/assets/site.css');
 await copyFile('docs/technical-plan.md','dist/technical-plan.md');
+await copyFile('docs/operation-ledger.md','dist/operation-ledger.md');
 await writeFile('dist/assets/favicon.svg','<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="6" fill="#143b40"/><path d="M6 24 16 6l10 18H6Z" fill="none" stroke="#e7f4f4" stroke-width="2"/><path d="M11 18h10M16 18v9" stroke="#e7f4f4" stroke-width="2"/></svg>');
 const bundle = await build({entryPoints:['src/site.js','src/mermaid.js'],outdir:'dist/assets',bundle:true,splitting:true,format:'esm',minify:true,target:'es2022',legalComments:'linked',chunkNames:'chunks/[name]-[hash]',logLevel:'warning',metafile:true});
 await mkdir('dist/licenses',{recursive:true});
@@ -141,6 +145,6 @@ for (const name of [...packages].sort()) {
   }
 }
 await writeFile('dist/licenses/README.md',notices.join('\n')+'\n');
-const manifest = {version:'2.1',baselineDate:'2026-11-12',publicationDate:'2026-11-16',sourceSha256:createHash('sha256').update(source).digest('hex'),chapters:rendered.map(({heading}) => ({id:heading.id,title:heading.title})),headings:headings.length,diagrams:diagramCount,searchRecords:searchRecords.length};
+const manifest = {version:siteMeta.version,baselineDate:siteMeta.baselineDate,publicationDate:siteMeta.publicationDate,status:siteMeta.status,sourceSha256:createHash('sha256').update(source).digest('hex'),chapters:rendered.map(({heading}) => ({id:heading.id,title:heading.title})),bodyChapters:mainNav.length,appendices:appendixNav.length,headings:headings.length,diagrams:diagramCount,diagramSources:(source.match(/^```mermaid$/gm) || []).length,searchRecords:searchRecords.length};
 await writeFile('dist/build-manifest.json',JSON.stringify(manifest,null,2)+'\n');
 console.log(`Built ${rendered.length} chapters, ${headings.length} headings, ${diagramCount} diagrams and ${searchRecords.length} search sections.`);

@@ -2,7 +2,7 @@
 
 复用 XCtechResource 的 React/Next.js 前端工程与 Cloudflare 服务基础，迁移 1Panel v2 的完整运维功能。Go 的容器、网站、数据库、文件、备份及主机执行能力继续复用。首版以 XC React 控制台、Cloudflare 控制面、connector 和原 core/agent 完成功能闭环；原 core 最终退役单列后续阶段。本文聚焦功能范围、代码复用边界、接口协议、数据归属、迁移步骤和验收，不纳入定价与费用模型。
 
-**设计版本 2.1 · 2026-11-12 · 功能迁移、产品生命周期与分阶段验收基线**
+**设计版本 2.2 · 2026-11-12 · 2.1 评审校正、功能迁移、产品生命周期与分阶段验收基线**
 
 1Panel 源码基线固定为 2026-11-12 审查时与远端 dev-v2 核对一致的 `cedb8ddda9254bdef0fddba96b7fa59c6ab8c633`，提交时间为北京时间 2026 年 11 月 12 日 14:22:38；相比原方案的 `daae8c43` 增加 84 个提交。XCtechResource 以 2026-11-12 审查时的工作树为复用输入，其 HEAD 为 `641b8b1`，工作树含未提交修改，实施前需独立固定可复现版本。以下复用与改造安排属于实施设计，完成状态以各阶段功能验收为准。[1Panel 固定源码](https://github.com/1Panel-dev/1Panel/commit/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633)
 
@@ -457,6 +457,107 @@ P0 在压测前冻结负载文件与摘要：命令/秒及操作比例、突发�
 | ADR-08 | core 退役为 P6 独立交付 | 共享数据、updater、快照转换及无 core 验收全部就绪 |
 
 实施以依赖和证据推进。P0–P5 完成功能迁移、首版生命周期及对应验收，P6 独立退役 core。容量结果与功能结果分别呈现；任何未运行、失败、不适用或私有能力缺口必须保留明确处置，不以文档检查、截图或接口返回替代真实执行证据。
+
+## 15.3 2.2 评审校正与可执行门禁
+
+本节把 2.1 评审中已确认的设计缺口落成实施契约。它不裁剪第 13 节的完整功能迁移范围，也不引入定价或费用模型；新增的参数和状态在 P0 通过真实代码、Cloudflare 配置与实验结果冻结前，均保持 `待 PoC` 或 `PLANNED`。
+
+### 15.3.1 R1 命令状态、并发事件与证据裁决
+
+命令的执行事实、取消意图和对账状态不能由一个字段互相覆盖。规范状态记录至少包含 `state`、`lastKnownExecutionState`、`cancelIntent`、`reconcileState`、`sideEffectExtent`、`evidenceRefs` 和 `revision`。状态图是导读，以下转移表是 CAS 合并函数的权威输入。
+
+| 事件 | 允许来源 | 目标 | 守卫与证据 |
+|---|---|---|---|
+| 投递确认超时/失联 | DISPATCHED、RECEIVED、RUNNING、CANCEL_REQUESTED | RECONCILING | 保留最后可信状态；必须生成对账请求，不得直接判失败 |
+| 取消请求已接受 | DISPATCHED、RECEIVED、RUNNING | CANCEL_REQUESTED | 记录取消意图和操作者；不得覆盖已经确认的副作用 |
+| 证实未启动且取消完成 | CANCEL_REQUESTED、RECONCILING | CANCELLED | 节点 journal 或现场证据证明未启动；`sideEffectExtent=NONE` |
+| 取消与完成竞争 | CANCEL_REQUESTED、RECONCILING | SUCCEEDED 或 REVIEW_REQUIRED | 以最后可信执行事实为准；取消生效前已有副作用时标记 `cancelIneffective` |
+| 证实未启动且过期 | DISPATCHED、RECEIVED、RECONCILING | EXPIRED | 只能依据可信未启动证据；已启动任务不得标为过期 |
+| 核对证实完成/失败 | UNCERTAIN、REVIEW_REQUIRED | SUCCEEDED 或 FAILED | 只读核验、checkpoint 或现场事实满足操作契约 |
+| 无法安全判定 | UNCERTAIN、REVIEW_REQUIRED | REVIEW_REQUIRED | `REVIEW_REQUIRED` 是人工待决终态，不自动改写成功或失败 |
+| 晚到结果 | 任一已应用或人工结论 | 原状态或 CONFLICT | 按 `eventId + agentEventSequence` 去重；冲突只追加证据和审计，不覆盖人工结论 |
+
+终态集合为 `{SUCCEEDED, FAILED, CANCELLED, EXPIRED, REJECTED, REVIEW_REQUIRED}`。`CANCELLED` 表示停止后续执行，不表示已回滚；`sideEffectExtent` 取 `NONE/PARTIAL/FULL`，实际回滚必须是操作契约声明的补偿步骤并创建关联的新 `commandId`。人工处置记录处置人、时间、权限、依据证据和结论；`UNRESOLVED` 保留 `REVIEW_REQUIRED`。AC-CMD/FI-CMD 增加取消/完成竞争、部分副作用、人工未决、人工后晚到结果一致与冲突、RUNNING 失联六类用例。
+
+### 15.3.2 R2 云端幂等记录与节点去重分层
+
+HTTP 幂等键和节点 `commandId` tombstone 是两层不同保护。服务端首次创建时固定 `expiresAt`，客户端重试必须复用原始 body、`resourceVersion` 和过期策略；刷新资源版本或延长有效期属于新意图、新 key。服务端先完成当前身份、租户、节点和权限版本校验，再查询幂等收据，不能用旧 key 绕过撤权。
+
+`requestFingerprint` 计算规范化 method、path、body 与 `Idempotency-Key`；`intentHash` 计算最终不可变命令意图。两者、首次生成的 `expiresAt` 和原 `commandId` 一并保存。HTTP 幂等收据保留期必须覆盖客户端最大重试窗口和 7 天入场期，且不得长于节点去重 tombstone 保留期（当前节点窗口为 14 天、tombstone 至少 30 天）。云端收据过窗后，同 key 作为新意图处理并返回 `idempotencyReplay=false`；节点仍持有旧 tombstone 时，按 `commandId + intentHash` 拒绝不一致重放。FI-CMD 覆盖云端收据已清理、节点 tombstone 仍在或已清理的四象限。
+
+### 15.3.3 R3 授权缓存、撤销传播与租约上界
+
+90 秒租约和 30 秒续租是失联兜底设计，不是已验证的撤销 SLO。授权缓存必须携带 `verifiedAt`、tenant、node、incarnation、credentialVersion、authorizationVersion 和硬过期时间。缓存命中不得重新签发滑动的 `now + 90s` grant；每次续租满足：
+
+```text
+leaseUntil <= min(
+  verifiedAt + maxAuthorizationStaleness,
+  sessionExpiresAt,
+  credentialExpiresAt,
+  nodeAuthorizationExpiresAt
+)
+```
+
+`maxAuthorizationStaleness`、正常撤销传播目标和故障上界均待 PoC 冻结；`p95≤5s` 只能作为候选目标。撤销观测从 D1 授权版本提交开始，分别测量拒绝新准入、停止投递和关闭 PTY。已获知撤销版本的端点立即拒绝旧 grant；网络隔离且尚未知撤销的执行端只能依靠绝对 `leaseUntil` 停止，不能宣称即时拒绝。CAP-03 分通知可达与通知丢失两种条件报告，并验证缓存命中不会延长旧授权。
+
+### 15.3.4 R4 节点写入控制与跨入口互斥
+
+首版在节点实际 Go service 变更入口强制 `managementMode ∈ {CLOUD_MANAGED, LOCAL_MAINTENANCE}` 与持久 `fenceVersion`，而不是只在 connector 或 React 层隐藏入口。覆盖 core API、agent socket、MCP、1pctl、Cron、证书续期、应用同步和维护任务。本机 root 能绕过 fence 属于运维信任边界，应记录为已知限制并通过漂移检测发现，不能宣称由协议防住。
+
+进入 `LOCAL_MAINTENANCE` 前排空或标记在途任务、提升 fence、记录操作者和原因；维护超时自动回切并重新核对水位。资源锁矩阵至少覆盖：网站配置与证书续期的 nginx 配置锁、数据库恢复与容器更新的 volume 锁、快照恢复与 Cron 备份的节点/数据锁、升级与所有破坏性操作的节点锁。`commandId` 去重只解决同一命令重复，不能替代不同入口对同一资源的互斥。AC-LIFE 增加云端与 Cron、证书与网站配置、恢复与备份三组并发用例。
+
+### 15.3.5 R5–R6 容量实验与 Cloudflare 硬约束
+
+命令队列不能沿用默认批处理配置来声称 2 秒接收目标。Cloudflare Queues 当前默认 `max_batch_size=10`、`max_batch_timeout=5s`，单条失败默认可能导致批次重投；命令队列在 P0 冻结 `max_batch_size=1`、`max_batch_timeout=0` 的低延迟配置，消费者逐条 `ack()`，并分别测低负载、峰值、故障恢复三条路径。`oldestOutboxAge` 和 60 秒补偿扫描属于恢复路径，单独报告，不与正常接收 p95 混算。[Queues 批处理与重试](https://developers.cloudflare.com/queues/configuration/batching-retries/)
+
+CAP-01 以单租户 D1 为主要容量风险。D1 单库逐条处理查询，额外请求开销不计入 SQL 时长，过载可能返回 `overloaded`；单库上限 10GB 且不可提升。实验记录授权缓存命中率、真实 SQL/批次数、排队时延、`rows_read/rows_written`、事件和审计增长、归档阈值与恢复余量。负载预算不能把 333 次逻辑授权检查直接当成 333 条 SQL；但必须证明缓存命中和 batch 后的串行时间总和低于 1 秒并留有恢复余量。[D1 限制](https://developers.cloudflare.com/d1/platform/limits/)
+
+实现层面补充负向用例：单行/字符串/BLOB 超过 2MB、查询结果超过 50MB、单语句超过 100KB、绑定参数超过 100、batch 超过 30 秒；记录 `overloaded`、排队时延和清空时间。AgentConn 64MiB 是每个对象达到上限时的理论持久缓存水位（10,000 个同时满载约 625GiB/671.09GB），不是正常内存占用；需测正常水位分布和 48MiB 高水位暂停是否足够。摘要为每节点覆盖一行，存储增长预算应单算 commands、events、audit、tombstone、索引和故障积压，不把摘要写次数当新增行数。费用模型仍不属于本文。
+
+### 15.3.6 R7 Go 操作台账、R8 术语与 R9 参数冻结
+
+首批台账见 [`docs/operation-ledger.md`](operation-ledger.md)，先覆盖 `node.inspect`、`service.restart`、`container.ensure`、`file.install`、`terminal.open` 和 `backup.restore`。每行必须补真实入口文件/符号、固定源码提交、适配或 Go 改造分类、taskId/operationMarker 关联、取消边界、只读核验方法、跨入口锁和 AC/FI/CAP/NET 证据；未补齐前保持 `PLANNED`。
+
+版本/代次含义集中如下，正文中的同名字段必须遵循这一表：
+
+| 名称 | 语义 | 权威存储/校验点 |
+|---|---|---|
+| `nodeIncarnation` | 节点身份代次；重装、克隆或 journal 丢失后改变 | 节点身份与 journal；建链、任务和事件 |
+| `connectionEpoch` | 节点连接代次；旧连接不得投递新命令 | AgentConn DO 与 agent journal；ready 激活 |
+| `revision` / `entityRevision` | 行或实体的 CAS 版本 | 租户 D1；每次条件写入 |
+| `authorizationVersion` | 成员、节点或会话撤销代次 | TenantData 与 Relay/agent grant |
+| `credentialVersion` / `keyVersion` | 节点凭据或密钥轮换代次 | 节点目录与密钥元数据 |
+| `leaseSequence` | 同一终端租约的单调续租序号 | Relay 与 agent；续租/每帧 |
+| `agentEventSequence` | 单节点身份、命令域内的结果序号 | journal 与 command_events |
+| `schemaVersion` / `capabilityVersion` | 数据结构或节点能力契约版本 | DO attachment、节点目录、握手 |
+| `routingVersion` / `roleGeneration` | 数据分片路由或终端角色代次 | 目录库、Relay；建链和票据消费 |
+
+参数冻结表由 P0 维护；当前只列初始值和状态：
+
+| 参数 | 初始值 | 状态 | 验证实验 |
+|---|---:|---|---|
+| 连接授权租约上限 | 90s | 待 PoC | CAP-03 |
+| 续租周期 | 30s + jitter | 待 PoC | CAP-03 |
+| `maxAuthorizationStaleness` | 待定 | 待 PoC | CAP-03 |
+| 命令队列 batch size/timeout | 1 / 0s | P0 冻结候选 | CAP-01、CAP-04 |
+| HTTP 幂等收据保留期 | ≥7d 且不长于节点 tombstone | 待 P0 冻结 | FI-CMD |
+| 节点 command tombstone | ≥30d | 待 PoC | FI-CMD |
+| 补偿扫描周期 | 60s | 待 PoC | CAP-04 |
+| AgentConn 结果高水位 | 48MiB / 上限 64MiB | 待 PoC | CAP-01、CAP-04 |
+
+### 15.3.7 R10–R12 追踪、兼容与变更历史
+
+新增 `REQ11 容量与恢复余量`，覆盖 CAP-01–04、D1/DO/Queue 水位、归档与恢复；新增 `REQ12 链路可达性与延迟`，覆盖 NET、国内/海外路径、API/Relay/R2/包源切换。每个 AC、FI、CAP 和 NET 项必须在需求矩阵中有至少一个 REQ，反向也必须有验收证据。协议兼容补充 `minSupportedProtocol`、最低安全版本、最大允许离线窗口和不兼容节点的最小恢复/签名升级路径；不能因旧节点无法接收普通升级命令而形成升级死锁。
+
+本版变更记录：2.1 → 2.2 新增 ADR-09（状态与证据裁决）、ADR-10（幂等收据分层）、ADR-11（授权缓存陈旧上界）、ADR-12（节点写入 fence 与资源互斥）；新增 Queue 低延迟配置、D1 硬约束负向用例、Go 起始台账、术语表、参数冻结表和 REQ11/REQ12 追踪要求。以上仍是设计输入，未表示已经完成真实代码或容量验收。
+
+## 15.4 2.2 版本记录
+
+| 版本 | 日期 | 变化 | 状态 |
+|---|---|---|---|
+| 2.0 | 2026-11-12 | 原始迁移与 Cloudflare 控制面方案 | 历史基线 |
+| 2.1 | 2026-11-12 | 代码基线、34 路由组、可靠协议、生命周期和单租户容量门禁 | 设计基线 |
+| 2.2 | 2026-11-16 | 评审校正与可执行门禁，补齐状态、幂等、缓存、单写者、队列、D1、台账和构建契约 | 当前公开版本 |
 
 # 附录 A · 协议、数据与可靠性细则
 
