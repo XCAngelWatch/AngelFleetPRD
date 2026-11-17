@@ -5,6 +5,7 @@ import { build } from 'esbuild';
 
 const source = await readFile('docs/technical-plan.md', 'utf8');
 const siteMeta = JSON.parse(await readFile('docs/site-meta.json', 'utf8'));
+const acceptanceIds = JSON.parse(await readFile('docs/acceptance-ids.json', 'utf8'));
 async function removeAppleDoubleFiles(directory) {
   for (const entry of await readdir(directory, {withFileTypes:true})) {
     const path = `${directory}/${entry.name}`;
@@ -143,6 +144,7 @@ await copyFile('src/site.css','dist/assets/site.css');
 await copyFile('docs/technical-plan.md','dist/technical-plan.md');
 await copyFile('docs/operation-ledger.md','dist/operation-ledger.md');
 await copyFile('docs/command-state.json','dist/command-state.json');
+await copyFile('docs/acceptance-ids.json','dist/acceptance-ids.json');
 await writeFile('dist/assets/favicon.svg','<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="6" fill="#143b40"/><path d="M6 24 16 6l10 18H6Z" fill="none" stroke="#e7f4f4" stroke-width="2"/><path d="M11 18h10M16 18v9" stroke="#e7f4f4" stroke-width="2"/></svg>');
 await writeFile('dist/assets/og-card.svg',`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630"><rect width="1200" height="630" fill="#143b40"/><path d="M110 465 300 135l190 330H110Z" fill="none" stroke="#e7f4f4" stroke-width="18"/><path d="M205 370h190M300 370v110" stroke="#e7f4f4" stroke-width="18" stroke-linecap="round"/><text x="560" y="285" fill="#f4ffff" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','Microsoft YaHei',sans-serif" font-size="64" font-weight="700">AngelFleet PRD</text><text x="560" y="370" fill="#b9d8da" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','Microsoft YaHei',sans-serif" font-size="34">1Panel v2 Cloudflare 控制面 · v${escape(siteMeta.version)}</text><text x="560" y="430" fill="#b9d8da" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','Microsoft YaHei',sans-serif" font-size="24">公开技术方案与分阶段验收基线</text></svg>`);
 await writeFile('dist/robots.txt',`User-agent: *\nAllow: /\nSitemap: ${site}sitemap.xml\n`);
@@ -166,7 +168,7 @@ for (const name of [...packages].sort()) {
   }
 }
 await writeFile('dist/licenses/README.md',notices.join('\n')+'\n');
-const manifest = {version:siteMeta.version,baselineDate:siteMeta.baselineDate,publicationDate:siteMeta.publicationDate,status:siteMeta.status,sourceSha256:createHash('sha256').update(source).digest('hex'),chapters:rendered.map(({heading}) => ({id:heading.id,title:heading.title})),bodyChapters:mainNav.length,appendices:appendixNav.length,headings:headings.length,diagrams:diagramCount,diagramSources:(source.match(/^```mermaid$/gm) || []).length,searchRecords:searchRecords.length};
+const manifest = {version:siteMeta.version,baselineDate:siteMeta.baselineDate,publicationDate:siteMeta.publicationDate,status:siteMeta.status,sourceSha256:createHash('sha256').update(source).digest('hex'),chapters:rendered.map(({heading}) => ({id:heading.id,title:heading.title})),bodyChapters:mainNav.length,appendices:appendixNav.length,headings:headings.length,diagrams:diagramCount,diagramSources:(source.match(/^```mermaid$/gm) || []).length,searchRecords:searchRecords.length,acceptanceIds:Object.keys(acceptanceIds.ids).length};
 await writeFile('dist/build-manifest.json',JSON.stringify(manifest,null,2)+'\n');
 await removeAppleDoubleFiles('dist');
 console.log(`Built ${rendered.length} chapters, ${headings.length} headings, ${diagramCount} diagrams and ${searchRecords.length} search sections.`);

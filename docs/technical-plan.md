@@ -2,7 +2,7 @@
 
 复用 XCtechResource 的 React/Next.js 前端工程与 Cloudflare 服务基础，迁移 1Panel v2 的完整运维功能。Go 的容器、网站、数据库、文件、备份及主机执行能力继续复用。首版以 XC React 控制台、Cloudflare 控制面、connector 和原 core/agent 完成功能闭环；原 core 最终退役单列后续阶段。本文聚焦功能范围、代码复用边界、接口协议、数据归属、迁移步骤和验收，不纳入定价与费用模型。
 
-**设计版本 2.2 · 审查基线 2026-11-12 · 2.1 评审校正、功能迁移、产品生命周期与分阶段验收基线**
+**设计版本 2.3 · 审查基线 2026-11-12 · 2.2 评审校正、验收注册表、安全门禁与 schema 闭环基线**
 
 1Panel 源码基线固定为 2026-11-12 审查时与远端 dev-v2 核对一致的 `cedb8ddda9254bdef0fddba96b7fa59c6ab8c633`，提交时间为北京时间 2026 年 11 月 12 日 14:22:38；相比原方案的 `daae8c43` 增加 84 个提交。XCtechResource 以 2026-11-12 审查时的工作树为复用输入，其 HEAD 为 `641b8b1`，工作树含未提交修改，实施前需独立固定可复现版本。以下复用与改造安排属于实施设计，完成状态以各阶段功能验收为准。[1Panel 固定源码](https://github.com/1Panel-dev/1Panel/commit/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633)
 
@@ -421,6 +421,7 @@ P0–P5 交付保留本机 core/agent 的完整功能首版；普通服务器业
 | AC-STREAM / FI-LEASE 流与文件 | 各类会话、慢消费者、撤销丢失、connector崩溃、Go执行器租约、分片/取消/续传 | 关闭时限、缓冲水位、缺口、摘要和清理 |
 | AC-DOMAIN 业务 | 第 13 节及附录 B 的逐端点、provider、适用 profile | 完整分母、失败、缺口与复测 |
 | AC-LIFE / FI-RESTORE 首版生命周期 | 保留 core 的安装/重启/升级回滚、旧数据/快照恢复、身份轮换退役、跨存储水位不一致 | 节点前后版本、恢复点、任务对账和单写者 |
+| AC-SEC / FI-SEC 安全对抗性验收 | 路径与命令注入、票据伪造/重放、爆破限流、WSS Origin/CSRF、预签名 URL 越权、跨租户引用和日志泄密 | 攻击输入、拒绝结果、限流、审计和脱敏证据 |
 | NET 链路 | 海外/国内浏览器与节点、API/Relay/R2/包源、代理切换 | 分方向可达性、绝对延迟、断开与恢复 |
 | P6-AC 后续退役 | 无 core 安装/启动/升级/恢复及附录 B 退役条件 | 单独报告与接受依据 |
 
@@ -458,20 +459,20 @@ P0 在压测前冻结负载文件与摘要：命令/秒及操作比例、突发�
 
 实施以依赖和证据推进。P0–P5 完成功能迁移、首版生命周期及对应验收，P6 独立退役 core。容量结果与功能结果分别呈现；任何未运行、失败、不适用或私有能力缺口必须保留明确处置，不以文档检查、截图或接口返回替代真实执行证据。
 
-## 15.3 2.2 评审校正与可执行门禁
+## 15.3 2.3 评审校正与可执行门禁
 
-本节是 2.2 评审校正的门禁索引，字段、状态和 SQL 实现以附录 A/C 为权威，避免同一契约在两处独立演进。它不裁剪第 13 节的完整功能迁移范围，也不引入定价或费用模型；新增的参数和状态在 P0 通过真实代码、Cloudflare 配置与实验结果冻结前，均保持 `待 PoC` 或 `PLANNED`。
+本节是 2.3 评审校正的门禁索引，字段、状态和 SQL 实现以附录 A/C 为权威，验收编号以 [`docs/acceptance-ids.json`](acceptance-ids.json) 为唯一注册表，避免同一契约在多处独立演进。它不裁剪第 13 节的完整功能迁移范围，也不引入定价或费用模型；新增的参数和状态在 P0 通过真实代码、Cloudflare 配置与实验结果冻结前，均保持 `待 PoC` 或 `PLANNED`。
 
 ### 15.3.1 R1 命令状态、并发事件与证据裁决
 
-命令的执行事实、取消意图和对账状态不能由一个字段互相覆盖。规范状态记录至少包含 `state`、`lastKnownExecutionState`、`cancelIntent`、`reconcileState`、`sideEffectExtent`、`evidenceRefs` 和 `revision`。状态图是导读，以下转移表是 CAS 合并函数的权威输入。
+命令的执行事实、取消意图和对账状态不能由一个字段互相覆盖。规范状态记录至少包含 `state`、`lastKnownExecutionState`、`cancelIntent`、`reconcileState`、`sideEffectExtent`、`evidenceRefs` 和 `revision`。完整状态集合与 39 条允许边以版本化 [`docs/command-state.json`](command-state.json) 为唯一机器可读权威；下表是实现评审使用的异常与竞争事件索引，不得据此推导未列出的正常路径。CAS 合并函数和状态图必须逐边对照该 fixture。
 
-| 事件 | 允许来源 | 目标 | 守卫与证据 |
+| 事件索引 | 允许来源 | 目标 | 守卫与证据 |
 |---|---|---|---|
 | 投递确认超时/失联 | DISPATCHED、RECEIVED、RUNNING、CANCEL_REQUESTED | RECONCILING | 保留最后可信状态；必须生成对账请求，不得直接判失败 |
 | 取消请求已接受 | DISPATCHED、RECEIVED、RUNNING | CANCEL_REQUESTED | 记录取消意图和操作者；不得覆盖已经确认的副作用 |
 | 证实未启动且取消完成 | CANCEL_REQUESTED、RECONCILING | CANCELLED | 节点 journal 或现场证据证明未启动；`sideEffectExtent=NONE` |
-| 取消与完成竞争 | CANCEL_REQUESTED、RECONCILING | SUCCEEDED 或 REVIEW_REQUIRED | 以最后可信执行事实为准；取消生效前已有副作用时标记 `cancelIneffective` |
+| 取消与完成竞争 | CANCEL_REQUESTED、RECONCILING | SUCCEEDED 或 REVIEW_REQUIRED | 以最后可信执行事实为准；取消生效前已有副作用时仅将 `cancel_ineffective=1`（`cancelIntent` 保持其取消请求生命周期值） |
 | 证实未启动且过期 | DISPATCHED、RECEIVED、RECONCILING | EXPIRED | 只能依据可信未启动证据；已启动任务不得标为过期 |
 | 核对证实完成/失败 | UNCERTAIN、REVIEW_REQUIRED | SUCCEEDED 或 FAILED | 只读核验、checkpoint 或现场事实满足操作契约 |
 | 无法安全判定 | UNCERTAIN、REVIEW_REQUIRED | REVIEW_REQUIRED | `REVIEW_REQUIRED` 是人工待决终态，不自动改写成功或失败 |
@@ -483,7 +484,7 @@ P0 在压测前冻结负载文件与摘要：命令/秒及操作比例、突发�
 
 HTTP 幂等键和节点 `commandId` tombstone 是两层不同保护。服务端首次创建时固定 `expiresAt`，客户端重试必须复用原始 body、`resourceVersion` 和过期策略；刷新资源版本或延长有效期属于新意图、新 key。服务端先完成当前身份、租户、节点和权限版本校验，再查询幂等收据，不能用旧 key 绕过撤权。
 
-`requestFingerprint` 计算规范化 method、path、body 与 `Idempotency-Key`；`intentHash` 计算最终不可变命令意图。两者、首次生成的 `expiresAt` 和原 `commandId` 一并保存。HTTP 幂等收据保留期必须覆盖客户端最大重试窗口和 14 天交付重投窗口；破坏性操作的 key guard 至少覆盖节点 tombstone 窗口。收据正文在 `retainedUntil` 前不得清理，期间同 key 同摘要只能返回原 commandId 并将 `idempotencyReplay=true`，同 key 不同摘要返回 409；正文清理后保留紧凑 key guard 到 `guardUntil`。key guard 尚在时同 key 返回 410/`IDEMPOTENCY_KEY_EXPIRED`，不能静默创建新 commandId；只有完成明确的 key guard 清理策略后才允许复用 key，并返回 `idempotencyReplay=false`。节点 tombstone 仍按 `commandId + intentHash` 拒绝不一致重放；对 `backup.restore`、`disk.format` 等非幂等或破坏性操作，节点再按 `(operation, intentHash)` 保留效果去重窗口。FI-CMD 覆盖收据正文、key guard 和节点 tombstone 分别存在或清理的四象限。
+`requestFingerprint` 计算规范化 method、path、body 与 `Idempotency-Key`；`intentHash` 计算最终不可变命令意图。两者、首次生成的 `expiresAt` 和原 `commandId` 一并保存。幂等判定顺序固定为：先完成当前身份、租户、节点和权限版本校验；再按 `(tenantId, idempotencyKey)` 查收据；命中 `KEY_GUARD_ONLY` 返回 410/`IDEMPOTENCY_KEY_EXPIRED`；收据正文存在但 `requestFingerprint` 不同返回 409/`IDEMPOTENCY_REQUEST_MISMATCH`；指纹相同但 `intentHash` 不同返回 409/`IDEMPOTENCY_INTENT_MISMATCH`；两者都相同才返回原 `commandId` 并置 `idempotencyReplay=true`。这样重试判定不会在附录之间形成两套“摘要”语义。HTTP 幂等收据保留期必须覆盖客户端最大重试窗口和 14 天交付重投窗口；破坏性操作的 key guard 至少覆盖节点 tombstone 窗口。收据正文在 `retainedUntil` 前不得清理，正文清理后保留紧凑 key guard 到 `guardUntil`，期间不能静默创建新 commandId；只有完成明确的 key guard 清理策略后才允许复用 key，并返回 `idempotencyReplay=false`。节点 tombstone 仍按 `commandId + intentHash` 拒绝不一致重放；对 `backup.restore`、`disk.format` 等非幂等或破坏性操作，节点再按 `(operation, intentHash)` 保留效果去重窗口。FI-CMD 覆盖收据正文、key guard 和节点 tombstone 分别存在或清理的四象限。
 
 ### 15.3.3 R3 授权缓存、撤销传播与租约上界
 
@@ -572,17 +573,18 @@ CAP-01 以单租户 D1 和每节点 AgentConn 为主要容量风险。D1 单库�
 
 ### 15.3.7 R10–R12 追踪、兼容与变更历史
 
-新增 `REQ11 容量与恢复余量`，覆盖 CAP-01–04、D1/DO/Queue 水位、归档与恢复；新增 `REQ12 链路可达性与延迟`，覆盖 NET、国内/海外路径、API/Relay/R2/包源切换。每个 AC、FI、CAP 和 NET 项必须在需求矩阵中有至少一个 REQ，反向也必须有验收证据。协议兼容补充 `minSupportedProtocol`、最低安全版本、最大允许离线窗口和不兼容节点的最小恢复/签名升级路径；不能因旧节点无法接收普通升级命令而形成升级死锁。
+新增 `REQ11 容量与恢复余量`，覆盖 CAP-01、CAP-02、CAP-03、CAP-04、D1/DO/Queue 水位、归档与恢复；新增 `REQ12 链路可达性与延迟`，覆盖 NET、国内/海外路径、API/Relay/R2/包源切换。每个 AC、FI、CAP 和 NET 项必须在需求矩阵中有至少一个 REQ，反向也必须有验收证据。协议兼容补充 `minSupportedProtocol`、最低安全版本、最大允许离线窗口和不兼容节点的最小恢复/签名升级路径；不能因旧节点无法接收普通升级命令而形成升级死锁。
 
-本版变更记录：2.1 → 2.2 新增 ADR-09（状态与证据裁决）、ADR-10（幂等收据分层）、ADR-11（授权缓存陈旧上界）、ADR-12（节点写入 fence 与资源互斥）；新增 Queue 低延迟配置、D1 硬约束负向用例、Go 起始台账、术语表、参数冻结表和 REQ11/REQ12 追踪要求。以上仍是设计输入，未表示已经完成真实代码或容量验收。
+本版变更记录：2.2 → 2.3 新增验收 ID 注册表与正文双向检查，明确状态 fixture 是完整转移唯一权威，补齐 A.4/C.1 的 `resource_version`、`last_error` 与事件字段语义，统一幂等指纹/意图摘要判定，收敛 `cancel_ineffective` 单一表示，并增加 AC-SEC/FI-SEC 安全对抗性验收和 A.12 攻击输入用例。以上仍是设计输入，未表示已经完成真实代码、攻击测试或容量验收。
 
-## 15.4 2.2 版本记录
+## 15.4 2.3 版本记录
 
 | 版本 | 日期 | 变化 | 状态 |
 |---|---|---|---|
 | 2.0 | 2026-11-12 | 原始迁移与 Cloudflare 控制面方案 | 历史基线 |
 | 2.1 | 2026-11-12 | 代码基线、34 路由组、可靠协议、生命周期和单租户容量门禁 | 设计基线 |
 | 2.2 | 2026-11-16 | 评审校正与可执行门禁，补齐状态、幂等、缓存、单写者、队列、D1、台账和构建契约 | 当前公开版本 |
+| 2.3 | 2026-11-17 | 验收编号注册表、状态权威收敛、schema 字段闭环、幂等判定统一与安全对抗性验收 | 当前设计版本 |
 
 # 附录 A · 协议、数据与可靠性细则
 
@@ -659,8 +661,8 @@ intentHash 覆盖 tenantId、nodeId、nodeIncarnation、operation、规范化业
 | enrollments | enrollmentId、ticketHash、requestId、publicKeyHash、expiresAt、consumedAt、nodeId |
 | commands | commandId、nodeId、nodeIncarnation、fenceVersion、idempotencyKey、requestFingerprint、intentHash、operation、resourceVersion、state、lastKnownExecutionState、cancelIntent、reconcileState、sideEffectExtent、evidenceRefs、cancelIneffective、revision、expiresAt、resultRef |
 | idempotency_receipts | tenantId、idempotencyKey、requestFingerprint、intentHash、commandId、expiresAt、retainedUntil、guardUntil、replayCount、status；正文可清理但 guardUntil 前禁止复用同 key |
-| outbox | eventId、entityId、entityRevision、kind、availableAt、attempts、claimToken、claimUntil、publishedAt、lastError |
-| command_events | eventId 唯一、commandId、nodeIncarnation、agentEventSequence、state、evidenceHash、applyState、appliedRevision、receivedAt |
+| outbox | eventId、entityId、entityRevision、kind、availableAt、attempts、claimToken、claimUntil、publishedAt、lastError；C.1 使用 `last_error` |
+| command_events | eventId 唯一、commandId、nodeIncarnation、agentSequence、contentHash、eventJson、applyState、appliedRevision、receivedAt；事件不另设 `state` 或 `evidenceHash` 列，状态从 `eventJson` 解析并按合并结果写入命令，内容摘要统一使用 `contentHash` |
 | terminal_sessions | terminalId、nodeId、userId、authSessionId、authorizationVersion、relayId、state、revision、createdAt |
 | artifacts | artifactId、tenantId、nodeId、objectKey、bytes、sha256、state、retentionUntil |
 | audit_events | auditId、actorId、authMethod、tenantId、nodeId、operation、targetId、outcome、traceId |
@@ -693,9 +695,9 @@ AgentConn SQLite 保存 activeEpoch、activeConnection、dispatchCursor、pendin
 
 密钥轮换、停用恢复和重装恢复分别定义接口与权限，P0 冻结后纳入 DEV04/DEV06。不得通过修改 tenantId、公钥或 SN 直接覆盖旧身份；吊销后的恢复使用新鲜身份验证与受控恢复凭证，并先核对原节点未决任务。
 
-创建命令要求 `Idempotency-Key`。同 tenant、同 key、同 intentHash 返回原 commandId，同 key 不同摘要返回 HTTP 409。敏感操作采用资源 revision 前置条件，冲突时返回当前 revision。操作能力从服务端和 agent 的共同 capability 集合中选择。
+创建命令要求 `Idempotency-Key`。服务端按“权限校验 → `(tenantId, key)` 查收据 → key guard 410 → `requestFingerprint` 不同 409/`IDEMPOTENCY_REQUEST_MISMATCH` → 指纹相同但 `intentHash` 不同 409/`IDEMPOTENCY_INTENT_MISMATCH` → 两者相同回放原 commandId”的顺序判定；只有最后一种情况返回 `idempotencyReplay=true`。敏感操作采用资源 revision 前置条件，冲突时返回当前 revision。操作能力从服务端和 agent 的共同 capability 集合中选择。
 
-命令创建和重试响应统一返回 `idempotencyReplay`：首次创建为 `false`，命中仍有效的幂等收据为 `true`；命中过期 key guard 返回 410，不产生新命令。客户端必须保存原始 body、resourceVersion 和服务端返回的 expiresAt，不能通过刷新参数复用旧 key。
+命令创建和重试响应统一返回 `idempotencyReplay`：首次创建为 `false`，命中仍有效且两种摘要均一致的幂等收据为 `true`；命中过期 key guard 返回 410，不产生新命令。客户端必须保存原始 body、resourceVersion 和服务端返回的 expiresAt，不能通过刷新参数复用旧 key。
 
 ## A.5. 命令状态、幂等与本地 journal
 
@@ -747,9 +749,9 @@ stateDiagram-v2
     REVIEW_REQUIRED --> FAILED: 人工处置且证据证实失败
 ```
 
-图中的 `REVIEW_REQUIRED` 是自动状态机的终止闸门；只有具备人工处置权限、处置依据和审计记录时，才允许沿两条人工边生成最终结论。`CONFLICT` 不是命令状态，而是 `command_events.apply_state`，不能出现在状态列或状态图中。转移表、CAS 合并函数和本图必须由同一份版本化状态定义生成或逐项对照，新增边不能只改图。
+图中的 `REVIEW_REQUIRED` 是自动状态机的终止闸门；只有具备人工处置权限、处置依据和审计记录时，才允许沿两条人工边生成最终结论。`CONFLICT` 不是命令状态，而是 `command_events.apply_state`，不能出现在状态列或状态图中。完整 39 条转移以 [`docs/command-state.json`](command-state.json) 为唯一权威，CAS 合并函数必须消费该定义；本节转移表仅为异常与竞争事件索引，新增边不能只改图或索引表。
 
-状态定义的机器可读基线保存在 [`docs/command-state.json`](command-state.json)。构建检查会逐边比对该文件与本图；人工边仍需经过权限、证据和审计校验，不能因为出现在 fixture 中而自动放行。
+状态定义的机器可读基线保存在 [`docs/command-state.json`](command-state.json)。构建检查会逐边比对该文件与本图；人工边仍需经过权限、证据和审计校验，不能因为出现在 fixture 中而自动放行。验收编号的机器可读注册表保存在 [`docs/acceptance-ids.json`](acceptance-ids.json)，构建检查要求正文引用与注册表双向闭合。
 
 执行器将操作分为只读、可验证的目标状态变更、带外部幂等键的操作、非幂等或破坏性操作。每类声明恢复策略、可核对证据、取消边界和补偿能力。创建目录可核对目标状态，服务重启可核对运行状态与进程证据，数据库恢复或磁盘操作可能需要检查专属 checkpoint。进程身份同时记录启动时间或操作标记，避免仅凭复用的 PID 判断。
 
@@ -936,6 +938,14 @@ R2 对象 key 由服务端生成，包含租户与用途前缀。上传先创建
 | 已吊销密钥尝试结果上报 | 拒绝旧身份，保留本地证据，受控身份恢复后再合并 |
 | 创建者撤权与待执行任务竞争 | 高风险任务启动前重新授权，未获准者不启动 |
 | 灰度批次出现未知副作用 | 暂停未启动后续任务，保留在途结果并对账 |
+| 文件路径含 `..`、符号链接或越界挂载 | 规范化后拒绝越界目标；不跟随未授权链接；写入前后保留路径与 inode 证据 |
+| cron、常用命令、脚本参数含 shell 注入片段 | operation schema 拒绝未允许字段或字符；执行器使用参数化 argv；审计记录拒绝原因 |
+| enrollment ticket、角色票据或结果事件伪造/重放 | 签名、绑定的 tenant/node/incarnation、过期时间和消费状态均校验；重放拒绝且不产生派生写入 |
+| 注册与票据验证遭受爆破 | 按主体、节点、来源和 ticket 维度限流；失败退避；不泄露 ticket 是否存在 |
+| 跨站提交或 WSS `Origin` 不受信 | CSRF token、同站会话和允许 Origin 同时校验；不接受仅靠 URL 参数的角色授权 |
+| 预签名 URL 被换租户、换对象或重复使用 | URL 绑定 tenant、artifact、分片、动作和过期时间；完成/撤销后立即失效；越权返回统一错误 |
+| 请求路径、节点 ID、artifact ID 指向其他租户 | 服务端从认证主体解析归属并再次核对资源；不能信任客户端 tenantId 或任意 binding 名称 |
+| 密钥、票据、命令参数和终端内容进入日志 | 统一脱敏与结构化字段 allowlist；审计可追溯但不可恢复秘密；脱敏规则纳入回归样例 |
 
 验收先覆盖两租户两节点的 React、Cloudflare 与原 Go 完整链路，再逐域执行协议故障注入和真实业务回归，最后完成部署、重启、升级、恢复与国内代理链路验证。保留 core 首版与后续 managed-agent 分别记录结果。模拟连接、浏览器测试与真实节点证据分开归档；功能台账保留所有失败、修复和复测记录。 功能纵切通过后，按第 15 节分别完成单租户 10,000 节点与多租户对照的持续混合负载验证；真实功能验收、模拟规模和目标 Cloudflare 部署证据分别标注。
 
@@ -1151,6 +1161,8 @@ erDiagram
 
 ## C.1 核心持久约束示例
 
+`resource_version` 是 API `resourceVersion` 的不透明十进制字符串投影，不能按 JavaScript 数值解析；命令创建、节点准入和本地启动均须按原值做前置条件比较。`cancel_ineffective` 是取消未能消除已发生副作用的唯一持久表示，`cancel_intent` 只记录取消请求生命周期。
+
 ```sql
 CREATE TABLE nodes (
     tenant_id TEXT NOT NULL,
@@ -1160,7 +1172,14 @@ CREATE TABLE nodes (
     management_mode TEXT NOT NULL DEFAULT 'CLOUD_MANAGED',
     fence_version INTEGER NOT NULL DEFAULT 1,
     revision INTEGER NOT NULL DEFAULT 1,
+    public_key_fingerprint TEXT,
     status TEXT NOT NULL,
+    capabilities_json TEXT NOT NULL DEFAULT '[]',
+    connector_build TEXT,
+    adapter_version TEXT,
+    execution_mode TEXT,
+    core_version TEXT,
+    agent_version TEXT,
     PRIMARY KEY (tenant_id, node_id),
     CHECK (credential_version > 0 AND fence_version > 0 AND revision > 0),
     CHECK (management_mode IN ('CLOUD_MANAGED', 'LOCAL_MAINTENANCE', 'POLICY_SCHEDULER'))
@@ -1176,6 +1195,7 @@ CREATE TABLE commands (
     request_fingerprint TEXT NOT NULL,
     intent_hash TEXT NOT NULL,
     operation TEXT NOT NULL,
+    resource_version TEXT NOT NULL,
     payload_json TEXT NOT NULL,
     state TEXT NOT NULL,
     last_known_execution_state TEXT NOT NULL DEFAULT 'NOT_STARTED',
@@ -1195,7 +1215,7 @@ CREATE TABLE commands (
     CHECK (fence_version > 0 AND revision > 0 AND expires_at > created_at),
     CHECK (side_effect_extent IN ('NONE', 'PARTIAL', 'FULL')),
     CHECK (last_known_execution_state IN ('NOT_STARTED', 'RECEIVED', 'RUNNING', 'SUCCEEDED', 'FAILED', 'CANCELLED', 'UNKNOWN')),
-    CHECK (cancel_intent IN ('NONE', 'REQUESTED', 'ACCEPTED', 'REJECTED', 'INEFFECTIVE')),
+    CHECK (cancel_intent IN ('NONE', 'REQUESTED', 'ACCEPTED', 'REJECTED')),
     CHECK (reconcile_state IN ('NOT_REQUIRED', 'PENDING', 'IN_PROGRESS', 'RESOLVED', 'MANUAL')),
     CHECK (cancel_ineffective IN (0, 1))
 );
@@ -1253,6 +1273,7 @@ CREATE TABLE outbox (
     claim_token TEXT,
     claim_until INTEGER,
     attempts INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
     published_at INTEGER,
     PRIMARY KEY (tenant_id, event_id)
 );
@@ -1288,7 +1309,9 @@ CREATE INDEX outbox_ready
 | AUTH_EXPIRED | 401，现有流按租约关闭 | 重新登录或刷新授权 |
 | NODE_FORBIDDEN | 403 | 显示无权操作，停止重试 |
 | CAPABILITY_UNSUPPORTED | 409 | 展示所需 agent 版本与能力 |
-| IDEMPOTENCY_CONFLICT | 409 | 保留原请求与摘要，检查客户端 key 使用 |
+| IDEMPOTENCY_REQUEST_MISMATCH | 409 | 同 key 的 method、path 或规范化 body 不同；停止重试并生成新 key |
+| IDEMPOTENCY_INTENT_MISMATCH | 409 | 指纹相同但 intentHash 或 resourceVersion 不同；报告 canonicalization 或版本不一致，不创建新命令 |
+| IDEMPOTENCY_KEY_EXPIRED | 410 | key guard 尚存；不能复用旧 key，等待清理策略或生成新 key |
 | RESOURCE_REVISION_CONFLICT | 409 | 重新查询资源，用户确认新意图 |
 | NODE_OFFLINE | 查询返回503，允许离线排队的命令返回202 | 展示离线与有效期，区分排队和执行 |
 | COMMAND_REJECTED | 已有任务查询返回200，state为REJECTED | 显示确定未执行的业务原因，修改意图后创建新命令 |
@@ -1325,8 +1348,8 @@ REQ 是产品追踪编号，不替代附录 B 的路由组和逐端点台账。�
 
 | 需求 | 产品交付与完成条件 | 对应范围 / 阶段 | AC / FI / CAP / NET 证据 |
 |---|---|---|---|
-| REQ01 身份与权限 | 登录、会话、成员和节点授权可撤销；深链接同样鉴权 | §10、§13.1、B.3 / P0–P1、P3 | AC-AUTH、FI-AUTH、CAP-03、NET-AUTH |
-| REQ02 设备生命周期 | DEV01–DEV08 可操作、可诊断；连接与健康分开展示 | B.5.1、附录 A.2 / P1–P5 | AC-LIFE、FI-LIFE、CAP-04、NET-REG |
+| REQ01 身份与权限 | 登录、会话、成员和节点授权可撤销；深链接同样鉴权；安全对抗输入不越权、不泄密 | §10、§13.1、B.3、A.12 / P0–P1、P3 | AC-AUTH、FI-AUTH、AC-SEC、FI-SEC、CAP-03、NET-AUTH |
+| REQ02 设备生命周期 | DEV01、DEV02、DEV03、DEV04、DEV05、DEV06、DEV07、DEV08 可操作、可诊断；连接与健康分开展示 | B.5.1、附录 A.2 / P1–P5 | AC-LIFE、FI-LIFE、CAP-04、NET-REG |
 | REQ03 任务与审计 | commandId 跨页追踪，关联本地 taskId；失败、取消与未知结果不混用 | §8、§13.5、B.5.4 / P2–P3 | AC-CMD、FI-CMD、CAP-01、NET-CMD |
 | REQ04 终端与实时流 | 主机、SSH、容器 exec、日志及 console 按能力开放；租约与断线行为可验证 | §9、B.5.3 / P3–P4 | AC-TERM、FI-TERM、CAP-02、NET-TERM |
 | REQ05 文件与资源传输 | 文件操作、分片传输、分享和备份制品可校验、取消及清理 | §11、§13.2、B.4 / P3–P4 | AC-FILE、FI-FILE、CAP-02、NET-R2 |
@@ -1335,8 +1358,8 @@ REQ 是产品追踪编号，不替代附录 B 的路由组和逐端点台账。�
 | REQ08 计划与配置 | 脚本、常用命令、计划、证书和告警有配置版本与应用回执；离线策略明确 | §13.4、B.3–B.4 / P3–P4 | AC-LIFE、FI-CONFIG、CAP-04、NET-POLICY |
 | REQ09 VM、AI 与 MCP | 按公开 provider 与实际硬件验收；私有缺口显式处置，MCP 不绕过授权 | §13.2、B.5.6–B.7 / P4 | AC-MCP、FI-AUTH、CAP-01、NET-MCP |
 | REQ10 安装与恢复 | 保留 core 的安装、升级、回滚、快照、数据迁移和退役闭环 | §12、B.5.5 / P5 | AC-RECOVERY、FI-RECOVERY、CAP-04、NET-R2 |
-| REQ11 容量与恢复余量 | 单租户 10,000 节点、D1/DO/Queue 水位、归档和恢复余量分别有实测门禁 | §15.1、§15.3.5 / P0–P5 | AC-CAP、FI-CAP、CAP-01–04、NET-CAP |
-| REQ12 链路可达性与延迟 | API、Relay、R2、包源及国内/海外路径按可达性、延迟和失败切换验收 | §9、§15.3.7 / P0–P4 | AC-NET、FI-NET、CAP-02、NET-01–04 |
+| REQ11 容量与恢复余量 | 单租户 10,000 节点、D1/DO/Queue 水位、归档和恢复余量分别有实测门禁 | §15.1、§15.3.5 / P0–P5 | AC-CAP、FI-CAP、CAP-01、CAP-02、CAP-03、CAP-04、NET-CAP |
+| REQ12 链路可达性与延迟 | API、Relay、R2、包源及国内/海外路径按可达性、延迟和失败切换验收 | §9、§15.3.7 / P0–P4 | AC-NET、FI-NET、CAP-02、NET-01、NET-02、NET-03、NET-04 |
 
 ## D.4 设备状态与 DEV 验收矩阵
 

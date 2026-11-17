@@ -1,6 +1,6 @@
 {
   "name": "angelfleet-prd",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "description": "Public 1Panel Cloudflare control-plane design documentation",
   "scripts": {
     "build": "node scripts/build.mjs",
