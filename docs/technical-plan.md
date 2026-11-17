@@ -2,7 +2,7 @@
 
 复用 XCtechResource 的 React/Next.js 前端工程与 Cloudflare 服务基础，迁移 1Panel v2 的完整运维功能。Go 的容器、网站、数据库、文件、备份及主机执行能力继续复用。首版以 XC React 控制台、Cloudflare 控制面、connector 和原 core/agent 完成功能闭环；原 core 最终退役单列后续阶段。本文聚焦功能范围、代码复用边界、接口协议、数据归属、迁移步骤和验收，不纳入定价与费用模型。
 
-**设计版本 2.3 · 实施状态：实施设计，待 P0–P6 分阶段验收**
+**设计版本 2.4 · 实施状态：实施设计，待 P0–P6 分阶段验收**
 
 本方案定义 XC React、Cloudflare 控制面、connector 与 Go 执行栈之间的最终职责边界。1Panel 的主机、容器、网站、数据库、文件、备份和终端能力继续由 Go 执行；Cloudflare 负责身份、租户、授权、任务编排、审计和可靠事件；XC React 负责统一运维体验。代码复用输入必须在实施时固定为可复现提交，具体入口和迁移边界见附录 B。
 
@@ -174,7 +174,7 @@ flowchart LR
 
 这张图只表达部署边界：控制 API、实时流、对象传输和节点执行彼此分离；Queue 是补偿路径，不是在线命令的唯一入口。
 
-Worker 之间使用 service binding，DO 通过 namespace binding 访问，D1 通过数据 Worker 已部署的 binding 访问。公网传入的身份头在入口统一清理，服务层根据已验证主体重建调用上下文。日志中统一携带 traceId、tenantId、nodeId、commandId 或 terminalId。
+Worker 之间使用 Service Binding，DO 通过 namespace binding 访问，D1 通过数据 Worker 已部署的 binding 访问。Service Binding RPC 是对象能力，不等于租户授权；调用方必须等待每次调用，provider 只暴露显式领域方法并再次核对主体、tenant、角色和 command scope，记录每次 binding invocation。单次请求的 Worker-to-Worker 调用预算（官方上限 32 次）进入 CAP 指标；provider 先发布、调用方后切换，删除方法前先完成调用方迁移。公网传入的身份头在入口统一清理，服务层根据已验证主体重建调用上下文。日志中统一携带 traceId、tenantId、nodeId、commandId 或 terminalId。[Service Binding RPC](https://developers.cloudflare.com/workers/runtime-apis/bindings/service-bindings/)
 
 DO 使用服务端 `ctx.acceptWebSocket()` 接受连接以支持休眠。connector 主动连接 Relay，使终端两端均为 DO 接受的 WebSocket。构造函数恢复附件与必要持久状态；业务按事件处理，不保持等待节点任务完成的长生命周期请求。[DO WebSocket 设计](https://developers.cloudflare.com/durable-objects/best-practices/websockets/)、[DO 生命周期](https://developers.cloudflare.com/durable-objects/concepts/durable-object-lifecycle/)
 
@@ -204,7 +204,7 @@ Workers 的平台边界与套餐数字集中见 [`docs/platform-constraints.md`]
 
 租户库供给状态依次为 REQUESTED、DB_CREATED、MIGRATED、BOUND、VERIFIED、ACTIVE。自动化先建库和执行迁移，再发布含该 D1 binding 的数据 Worker，并发布上游到该数据 Worker 的 Service Binding。BOUND 同时确认这两层绑定，通过完整调用路径的读写探针后才发布目录路由。失败停留在可见状态并重试。删除按 QUIESCING、EXPORTED、UNBOUND、DELETED 推进，目录保留墓碑。Cloudflare 管理 API 凭据只供给服务和发布流水线持有。
 
-初版建议每数据 Worker 最多 200 个租户绑定，作为可调整的发布批次预算。超过预算新增分片 Worker。所有写事务检查库内持久化 write-fence 与 routingVersion，覆盖 API、DO 结果回写、消费者和 maintenance。迁移时先关闭旧库写权限，排空在途写入并对账 outbox，再复制数据、校验行数/摘要/事件水位。目录更新新版本后启用新库对应代次的写权限，旧库保持冻结。旧 Worker 与旧缓存请求因版本或 fence 不匹配而失败。单个大租户的事件历史可按时间归档至 R2，达到热度阈值后再评审按节点组分片。
+初版建议每数据 Worker 最多 200 个租户绑定，作为可调整的发布批次预算。超过预算新增分片 Worker。所有写事务检查库内持久化 write-fence 与 routingVersion，覆盖 API、DO 结果回写、消费者和 maintenance。迁移时先关闭旧库写权限，排空在途写入并对账 outbox，再复制数据、校验行数/摘要/事件水位。目录更新新版本后启用新库对应代次的写权限，旧库保持冻结。旧 Worker 与旧缓存请求因版本或 fence 不匹配而失败。单个大租户的事件历史可按时间归档至 R2，达到热度阈值后再评审按节点组分片。 200 是应用爆炸半径预算，不是平台上限；P0 冻结 accountWorkerCount、workerTenantBindingCount、directoryShardCount、每租户节点/命令/终端配额和超额策略。Paid 账户默认 500 个 Worker、每脚本约 5,000 个 bindings，超过时进入账号池或跨账号 ADR。完成 1、200、1,000 绑定规模的真实部署、路由切换、旧 Worker drain、写 fence、发布窗口和失败回滚实验后，才允许扩大分片。
 
 ## 6.2 数据分层
 
@@ -232,7 +232,7 @@ flowchart TD
 
 数据沿着“目录路由 → 租户状态 → 节点协调 → 主机事实”方向流动；任何一层都不能用展示缓存或客户端字段替代上游权威。
 
-权限撤销、任务状态推进及配置修改采用主库权威读取与条件写入。目录或展示缓存具有版本与 TTL，缓存过期或授权版本不确定时重新查询。D1 read replication 使用 Sessions/bookmark 提供顺序一致的读取，展示查询才在具备测试覆盖后启用复制读取。[D1 read replication](https://developers.cloudflare.com/d1/best-practices/read-replication/)
+权限撤销、任务状态推进及配置修改采用主库权威读取与条件写入。目录或展示缓存具有版本与 TTL，缓存过期或授权版本不确定时重新查询。D1 read replication 仍是异步副本能力，复制延迟没有硬上界；Sessions/bookmark 只提供顺序一致读取，不把副本变成强一致主库。授权、撤销、命令状态、resourceVersion、配额和恢复读一律走 primary 或同一 Sessions；只有报表/展示查询在声明 maxStaleness、返回 served_by_region/served_by_primary 并具备 primary fallback 后才允许走副本。bookmark 丢失、lag 超阈值或复制开关关闭时回主库。[D1 read replication](https://developers.cloudflare.com/d1/best-practices/read-replication/)
 
 ## 6.3 索引与约束设计
 
@@ -390,11 +390,11 @@ R2 预签名 URL、CORS、multipart 和 SHA-256 校验的协议细节以附录 A
 
 监控分为链路存活、agent 健康、业务指标和长期历史。协议 ping 或自动应答维护传输，60 秒业务心跳更新 DO 当前健康，连接存续期间使用 WebSocket attachment 保存 lastSeenAt 与健康摘要，休眠重建时恢复。连接关闭后重新握手与采样，持久存储只记录必要的状态变化和业务事件。D1 默认每 300 秒按 tenantId/nodeId 覆盖更新一行最新摘要，并将各节点写入时间打散；状态变化事件独立保存。60 秒业务上报不等于每次都写入 D1。用户打开实时页面时建立有期限的高频订阅，关闭页面即降频。节点列表同时显示 lastSeenAt、sampledAt 和 stale，避免把缓存摘要误判为在线。
 
-高频原始采样继续保留在节点。云端保存查询需要的摘要和事件，长期日志与批量时序归档 R2。状态变化与离线告警优先记录；日志正文按游标分页或独立流读取，设置上限、脱敏与保留策略。React 页面区分连接状态、健康状态和采样时间。
+高频原始采样继续保留在节点。云端保存查询需要的摘要和事件，长期日志与批量时序归档 R2。状态变化与离线告警优先记录；日志正文按游标分页或独立流读取，设置上限、脱敏与保留策略。React 页面区分连接状态、健康状态和采样时间。 Workers Logs 只作短期诊断：Paid 默认保留 7 天、单条日志上限 256 KB，量大时会采样。长期审计和容量指标通过 OTel/Logpush/Tail 导出到受控存储，日志中禁止密钥、ticket、终端输入和源码映射文件。
 
 # 12. 发布、升级、备份与恢复
 
-dev、staging、prod 使用独立 Worker、DO namespace、D1、Queues、Workflow 和 R2，凭据按环境分离。CI 固定运行时兼容日期与依赖锁文件，执行类型检查、构建、协议 schema 校验、前端契约、数据库迁移和最小真实节点回归。发布先迁移兼容结构，再发布消费者和服务端，再升级 agent，最后开放新功能。
+dev、staging、prod 使用独立 Worker、DO namespace、D1、Queues、Workflow 和 R2，凭据按环境分离。CI 固定运行时兼容日期与依赖锁文件，执行类型检查、构建、协议 schema 校验、前端契约、数据库迁移和最小真实节点回归。发布先迁移兼容结构，再发布消费者和服务端，再升级 agent，最后开放新功能。 CI 还必须锁定 compatibility_date/flags、D1/DO/Queues/R2 bindings、DO migrations、Queue consumer batch/CPU、Workflow concurrency、环境/区域和 spending limits；执行 wrangler dry-run、staging binding/namespace smoke、迁移前后校验、SBOM/签名/secret scan 与部署 provenance。Service Binding provider 先发，调用方后发；更新期间按 schema 兼容和旧 epoch 重连验证。
 
 DO namespace 按环境保持稳定，对类和存储 schema 做显式迁移。D1 使用 expand/backfill/switch/contract，前后版本兼容窗口覆盖允许离线的 agent。灰度按租户与节点队列推进，初始顺序建议内部节点、1%、10%、全量，阶段门槛包含连接成功率、任务错误、终端撤销、CPU 与写入量。 发布前冻结目标快照、并发、观察窗口、失败阈值及恢复条件，运行中不隐式加入新节点。涉及不可逆操作的批次出现 UNCERTAIN 时，默认暂停尚未启动的后续任务并继续接收已运行结果；恢复需先完成核对、更新策略版本和审计。云端回滚不代表节点副作用已撤销。
 
@@ -403,6 +403,8 @@ DO namespace 按环境保持稳定，对类和存储 schema 做显式迁移。D1
 首版继续支持原 core/agent 快照并验证真实恢复，额外保存 connector 身份恢复策略、执行 journal 和云端任务关联清单。恢复后先核对 incarnation、任务水位和未决操作；克隆恢复重新注册身份。core 退役阶段使用 managed 快照，包含业务数据、配置投影、journal schema、agent/connector 版本和对象 manifest，并提供旧快照提取与转换流程。
 
 D1 Paid 提供 30 天 Time Travel，另按业务恢复要求定期导出长期副本至 R2。恢复点按组件时间、水位和 manifest 记录，恢复后先冻结新写操作，对账 outbox、DO pending 状态和 agent journal，再恢复投递。建议 PoC 验证 60 分钟内恢复控制 API 与目录，跨服务任务对账完成时间单列。RPO 按最后一致水位和节点回执实测。[D1 Time Travel](https://developers.cloudflare.com/d1/reference/time-travel/)
+
+P0 必须冻结组件级 RPO/RTO，而不是只给控制 API 一个恢复时间：D1 primary/Time Travel、DO 状态从 D1+journal 重建、Queues/DLQ 重放、Workflows queued/state、R2 manifest 和节点 journal 分别记录最后一致水位、目标 RPO、目标 RTO、演练命令与证据。至少演练 D1/DO/Queue/R2 故障、区域不可用、账号级 Cloudflare outage 和 spending limit；恢复顺序为冻结新写、恢复权威数据、重建 DO、对账 outbox/journal、再放量。
 
 | 故障 | 预期行为 | 运维动作 |
 |---|---|---|
@@ -599,6 +601,8 @@ flowchart LR
 
 容量验证必须从单租户场景开始：逻辑授权检查、真实 SQL、DO 事件、队列补偿和恢复余量分别计量；多租户对照只用于识别隔离和分片效果。
 
+容量预算先写成可复算基线：30 天、10,000 节点对应逻辑授权复核 864,000,000 次、60 秒心跳 432,000,000 次、300 秒摘要覆盖 86,400,000 次；72 小时对应 86,400,000、43,200,000、8,640,000 次。摘要覆盖不是同等数量的新行，但 UPDATE、索引、审计、故障积压和重试的写放大必须单独计量。单次 30 秒复核拆成 tenant/node shard 批次，初始每批不超过 500–1,000 节点，受 1,000 queries/invocation、10,000 subrequests 和 32 次 Worker invocation 预算约束，最终数值由 CAP-01 冻结。 CAP-01 必须同时跑稳定负载、10k 节点随机重连风暴、授权撤销风暴、D1/DO/Queue 限流、R2 管理操作受限和 Workflow 排队；冻结 p95/p99、错误率、D1 query duration/queue wait/overloaded、rows_read/rows_written、oldestOutboxAge、DO 高水位、Workflow oldestQueuedAge、DLQ 进入率、积压清空时间和回滚阈值。未冻结前只能标记设计目标，不能宣称容量通过。
+
 | ID | 独立实验 | 必须证明 |
 |---|---|---|
 | CAP-01 | 一个租户 10,000 节点，连续 72h 混合负载 | 热库/授权吞吐、API与投递延迟、错误率、积压年龄、资源水位及恢复 |
@@ -746,6 +750,22 @@ CAP-01 以单租户 D1 和每节点 AgentConn 为主要容量风险。平台限�
 需求矩阵包含 `REQ11 容量与恢复余量`，覆盖 CAP-01、CAP-02、CAP-03、CAP-04、D1/DO/Queue 水位、归档与恢复；包含 `REQ12 链路可达性与延迟`，覆盖 NET、国内/海外路径、API/Relay/R2/包源切换。每个 AC、FI、CAP 和 NET 项必须在需求矩阵中有至少一个 REQ，反向也必须有验收证据。协议兼容包含 `minSupportedProtocol`、最低安全版本、最大允许离线窗口和不兼容节点的最小恢复/签名升级路径；不能因旧节点无法接收普通升级命令而形成升级死锁。
 
 实施门禁、参数冻结和验收注册表共同构成当前交付基线。任何契约变更必须同步更新附录 A/C、机器可读 fixture、验收 ID 和对应检查；未通过真实代码、Cloudflare 配置、真实节点或容量实验的内容保持 `PLANNED`、`待 PoC` 或 `IMPLEMENTED_UNVERIFIED`，不因文档存在而自动升级状态。
+
+## 15.4 P0 发布阻断项
+
+下列项目未完成时，文档可评审但不得把首版标为生产可用：
+
+| 阻断项 | 必须有的证据 |
+|---|---|
+| Cloudflare staging smoke | Worker/DO/D1/Queues/R2/Workflow 真实绑定、迁移、回滚和环境隔离 |
+| 单租户 CAP-01 | 10k 稳态、重连风暴、撤销风暴、限流与积压恢复，指标阈值冻结 |
+| 跨存储对账 | D1 command/outbox、AgentConn DO、节点 journal 的重复、迟到、孤儿和撤销胜负规则与修复扫描 |
+| Connector 供应链 | 签名 manifest、root of trust、anti-downgrade、崩溃回滚、版本兼容矩阵和密钥轮换 |
+| 灾备演练 | D1/DO/Queue/Workflow/R2/节点 journal 的 RPO/RTO，区域、账号和 spending-limit 故障 |
+| 端点覆盖 | route registry 生成 endpoint→page→permission→operation→adapter→evidence 清单；破坏性、恢复、升级、文件、终端和配置操作逐项映射 |
+| 安全边界 | SSH host-key pinning、命令参数边界、日志脱敏回归、租户配额、导出/删除和审计保留策略 |
+
+首版不把 Hyperdrive、OTA/Yocto、AI MCP 扩展和 managed-agent 退役列入 P0–P5 验收分母；若后续接入外部 Postgres/MySQL，必须另建 ADR，且不能成为授权、命令或审计的第二权威。
 
 # 附录 A · 协议、数据与可靠性细则
 
@@ -924,7 +944,7 @@ stateDiagram-v2
 
 ## A.6. D1 outbox、至少一次通知与跨服务一致性
 
-控制 Worker 调用 TenantData Worker，将 commands、初始审计和 outbox 事件放入同一租户 D1 的 `batch()`。任何 SQL 失败时整批回滚。条件更新零行不触发回滚，凡涉及 revision CAS、取消或撤销的派生 outbox 与审计，都使用同一赢家请求与新 revision guard 的条件 INSERT SELECT，并验证结果行数，确保只有胜出状态转换生成事件。提交成功后返回 commandId，并尝试以有界超时直接调用对应 AgentConn 的 `dispatchKick` 快路径；该调用只负责唤醒和触发 `beginDispatch`，不取代 D1 中已经提交的 outbox。直连失败或超时不改变命令意图，outbox dispatcher 仍经 Queues 发布以完成持久补偿。发布成功但 publishedAt 尚未更新就退出时允许重复发布，消费者按 eventId、commandId 和 DO 侧投递版本去重。[D1 事务批处理](https://developers.cloudflare.com/d1/worker-api/d1-database/)、[Queues 交付语义](https://developers.cloudflare.com/queues/reference/delivery-guarantees/)
+控制 Worker 调用 TenantData Worker，将 commands、初始审计和 outbox 事件放入同一租户 D1 的 `batch()`。任何 SQL 失败时整批回滚。 读取的自动重试不替代业务恢复：D1 读重试上限由运行时控制，写入重试由应用以指数退避和 jitter 负责，并始终携带幂等的 (commandId,eventId,revision)。条件更新零行不触发回滚，凡涉及 revision CAS、取消或撤销的派生 outbox 与审计，都使用同一赢家请求与新 revision guard 的条件 INSERT SELECT，并验证结果行数，确保只有胜出状态转换生成事件。提交成功后返回 commandId，并尝试以有界超时直接调用对应 AgentConn 的 `dispatchKick` 快路径；该调用只负责唤醒和触发 `beginDispatch`，不取代 D1 中已经提交的 outbox。直连失败或超时不改变命令意图，outbox dispatcher 仍经 Queues 发布以完成持久补偿。发布成功但 publishedAt 尚未更新就退出时允许重复发布，消费者按 eventId、commandId 和 DO 侧投递版本去重。[D1 事务批处理](https://developers.cloudflare.com/d1/worker-api/d1-database/)、[Queues 交付语义](https://developers.cloudflare.com/queues/reference/delivery-guarantees/)
 
 ```mermaid
 sequenceDiagram
@@ -978,7 +998,7 @@ sequenceDiagram
     end
 ```
 
-outbox 领取由 TenantData Worker 执行带 claimUntil 条件的原子 UPDATE，写入随机 claimToken，并使用 RETURNING 只返回本次赢得的事件。发布成功、失败计数、重试时间与释放 claim 都必须匹配同一 claimToken，已过期的旧 dispatcher 不能覆盖新持有者状态。超时后可以重新领取，发布重复仍由下游去重。正常路径在提交后立即唤醒投递；建议每 60 秒运行一次有界补偿扫描，按 availableAt 和主键游标分片，恢复超时 claim。发布失败指数退避，达到阈值进入可见异常列表和死信处理，D1 中的未完成意图继续保留。Queues 消费 Worker 通过内部 RPC 调用 AgentConn，ACK 表示消费端已可靠接受通知或确认事件已完成，业务完成由 agent 结果和核验推进。队列保留时间以部署时的套餐配置为准，设备长期离线任务仍保存在 D1。[Queues 确认与重试](https://developers.cloudflare.com/queues/configuration/batching-retries/)
+outbox 领取由 TenantData Worker 执行带 claimUntil 条件的原子 UPDATE，写入随机 claimToken，并使用 RETURNING 只返回本次赢得的事件。发布成功、失败计数、重试时间与释放 claim 都必须匹配同一 claimToken，已过期的旧 dispatcher 不能覆盖新持有者状态。超时后可以重新领取，发布重复仍由下游去重。正常路径在提交后立即唤醒投递；建议每 60 秒运行一次有界补偿扫描，按 availableAt 和主键游标分片，恢复超时 claim。发布失败指数退避，达到阈值进入可见异常列表和死信处理，D1 中的未完成意图继续保留。Queues 消费 Worker 通过内部 RPC 调用 AgentConn，ACK 表示消费端已可靠接受通知或确认事件已完成，业务完成由 agent 结果和核验推进。队列保留时间以部署时的套餐配置为准，设备长期离线任务仍保存在 D1。 Queue 的 100 次是平台重试上限，不是业务默认值；命令补偿显式设置 max_retries、逐条 ack/retry，达到阈值进入 DLQ，毒消息隔离并可审计 replay。Queue 保留最长 14 天，必须在到期前告警并由 D1 outbox 重建交付；CAP-04 分开统计 retry、DLQ、retention 删除和 backlog 清空。[Queues 确认与重试](https://developers.cloudflare.com/queues/configuration/batching-retries/)
 
 AgentConn 对已接受的 pendingCommand 在 DO storage 中持久化，节点恢复连接后与 agent journal 对账。agent 结果携带稳定 eventId 和 `(nodeIncarnation, commandId)` 域内的 eventSequence，DO 保存后可回复 result.received，表示已进入持久收件箱。TenantData Worker 先写 command_events 的 PENDING 记录，再通过状态 CAS 合并命令并更新 applyState 与 appliedRevision。事件唯一键存在只代表已收件，不能作为已合并的证明。
 
@@ -1021,7 +1041,7 @@ sequenceDiagram
     R->>A: credit
 ```
 
-两侧连接均由 Relay 使用 `ctx.acceptWebSocket()` 接受。建议 attachment 仅放角色、会话、代次和租约摘要，正式归属与撤销版本持久保存。attach 数据在连接关闭后消失，DO constructor 重建只恢复现存连接和持久元数据。终端建立存在超时，建议两端等待 30 秒后释放未进入 ACTIVE 的预留。[DO WebSockets 与休眠](https://developers.cloudflare.com/durable-objects/best-practices/websockets/)
+两侧连接均由 Relay 使用 `ctx.acceptWebSocket()` 接受。建议 attachment 仅放角色、会话、代次和租约摘要，正式归属与撤销版本持久保存。 attachment 序列化上限按 16,384 bytes 设计，不能把完整授权、历史输出或大结果塞入连接附件；超过上限的状态写 DO SQLite/D1/R2，并在 constructor 按 schemaVersion 恢复。attach 数据在连接关闭后消失，DO constructor 重建只恢复现存连接和持久元数据。终端建立存在超时，建议两端等待 30 秒后释放未进入 ACTIVE 的预留。[DO WebSockets 与休眠](https://developers.cloudflare.com/durable-objects/best-practices/websockets/)
 
 ## A.8. 全端租约、撤销与续租
 
@@ -1051,7 +1071,7 @@ agent 保存最近 1 MiB 或 30 秒的终端输出用于短暂断线恢复，先
 
 R2 对象 key 由服务端生成，包含租户与用途前缀。上传先创建 metadata 与 multipart 会话，返回限定对象、HTTP 操作和有效期的预签名地址。完成接口核对对象大小和 multipart 清单，将对象从 UPLOADING 推进到 VERIFYING。该状态允许向指定验证节点发送 `artifact.verify` 下载校验任务，预期 SHA-256 来自上传会话记录或可信发布清单，验证通过才推进 READY。安装或恢复节点在使用前还要独立核对同一 SHA-256，校验失败停止后续动作。multipart ETag 不替代整文件 SHA-256。重复 complete 依据 artifactId 返回既有结果。
 
-建议分片大小 16–64 MiB，单个分片 URL 有效期 15 分钟，失败时重新授权该分片，最终数值按对象大小和网络测量调整。对象元数据未 READY 时禁止分发安装命令。清理作业处理过期 multipart、孤立对象与已删除租户对象，并留存审计。[R2 multipart](https://developers.cloudflare.com/r2/objects/upload-objects/)、[R2 预签名 URL](https://developers.cloudflare.com/r2/api/s3/presigned-urls/)
+建议分片大小 16–64 MiB，单个分片 URL 有效期 15 分钟，失败时重新授权该分片，最终数值按对象大小和网络测量调整。 R2 预签名 URL 是 bearer token，在过期前可重复使用，服务端无法即时撤销已发 URL；仅支持 S3 API 域名和 GET/HEAD/PUT/DELETE，HTML form POST 不支持。完成/取消依赖短 TTL、artifact 状态、唯一版本化 key、对象轮换和条件写入（If-None-Match/If-Match），不能把状态变更写成 URL 立即失效。multipart complete 超时重试时重新核对 uploadId、part list、SHA-256 和条件版本。对象元数据未 READY 时禁止分发安装命令。清理作业处理过期 multipart、孤立对象与已删除租户对象，并留存审计。[R2 multipart](https://developers.cloudflare.com/r2/objects/upload-objects/)、[R2 预签名 URL](https://developers.cloudflare.com/r2/api/s3/presigned-urls/)
 
 租户 D1 以主要写入区域选择创建位置，节点 AgentConn 与 TerminalRelay 按实际连接区域给 locationHint。jurisdiction 用于 eu、us 或 fedramp 等区域约束，DO 与 D1 同区域仍需测量往返延迟。终端数据路径不依赖逐帧数据库查询。区域要求同时覆盖 R2、Queues、Workflows 与日志的实际配置，不能由某一个 D1 或 DO 的 jurisdiction 推导整个平台数据驻留。[DO 位置](https://developers.cloudflare.com/durable-objects/reference/data-location/)、[D1 位置](https://developers.cloudflare.com/d1/configuration/data-location/)
 
@@ -1104,7 +1124,7 @@ R2 对象 key 由服务端生成，包含租户与用途前缀。上传先创建
 | enrollment ticket、角色票据或结果事件伪造/重放 | 签名、绑定的 tenant/node/incarnation、过期时间和消费状态均校验；重放拒绝且不产生派生写入 |
 | 注册与票据验证遭受爆破 | 按主体、节点、来源和 ticket 维度限流；失败退避；不泄露 ticket 是否存在 |
 | 跨站提交或 WSS `Origin` 不受信 | CSRF token、同站会话和允许 Origin 同时校验；不接受仅靠 URL 参数的角色授权 |
-| 预签名 URL 被换租户、换对象或重复使用 | URL 绑定 tenant、artifact、分片、动作和过期时间；完成/撤销后立即失效；越权返回统一错误 |
+| 预签名 URL 被换租户、换对象或重复使用 | URL 绑定 tenant、artifact、分片、动作和过期时间；短 TTL、artifact 状态、唯一 key 和条件写入共同阻断继续使用，不能宣称已发 URL 即时撤销；越权返回统一错误 |
 | 请求路径、节点 ID、artifact ID 指向其他租户 | 服务端从认证主体解析归属并再次核对资源；不能信任客户端 tenantId 或任意 binding 名称 |
 | 密钥、票据、命令参数和终端内容进入日志 | 统一脱敏与结构化字段 allowlist；审计可追溯但不可恢复秘密；脱敏规则纳入回归样例 |
 

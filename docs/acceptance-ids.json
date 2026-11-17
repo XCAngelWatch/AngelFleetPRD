@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "documentVersion": "2.3",
+  "documentVersion": "2.4",
   "description": "验收编号注册表。每个编号必须在 technical-plan.md 中被引用；引用编号不得脱离此注册表单独定义。",
   "ids": {
     "AC-UI": {"family": "AC", "package": "AC-UI", "scope": "登录、节点上下文、深链接、缓存隔离与越权"},

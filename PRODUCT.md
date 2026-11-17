@@ -16,7 +16,7 @@ The project team and public readers need to read, review, and reference the exis
 
 ## Product Purpose
 
-Publish the full design version 2.3 as an accessible public documentation repository and static website in XCAngelWatch.
+Publish the full design version 2.4 as an accessible public documentation repository and static website in XCAngelWatch.
 
 ## Capabilities and Constraints
 

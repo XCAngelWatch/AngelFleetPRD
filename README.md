@@ -4,7 +4,7 @@
 
 **在线阅读：[AngelFleet PRD](https://xcangelwatch.github.io/AngelFleetPRD/)**
 
-设计版本为 **2.3**，内容覆盖主体章节及附录 A–E，包括 XC React 前端复用、原 Go core/agent 功能迁移、Cloudflare 控制面、可靠任务协议、产品与设备生命周期、单租户 1 万节点验收条件，以及独立选入的系统 OTA / Yocto 扩展。
+设计版本为 **2.4**，内容覆盖主体章节及附录 A–E，包括 XC React 前端复用、原 Go core/agent 功能迁移、Cloudflare 控制面、可靠任务协议、产品与设备生命周期、单租户 1 万节点验收条件，以及独立选入的系统 OTA / Yocto 扩展。
 
 文档公开不代表平台功能、节点链路或容量验收已完成；协议参数和目标容量仍以文档中的阶段验收条件为准。
 
