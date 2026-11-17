@@ -27,7 +27,7 @@ assert.equal(await readFile('dist/404.html','utf8'),html,'404 page must use the 
 await stat('dist/assets/og-card.svg');
 assert((await readFile('dist/robots.txt','utf8')).includes('Sitemap: https://xcangelwatch.github.io/AngelFleetPRD/sitemap.xml'),'robots.txt must advertise sitemap');
 assert((await readFile('dist/sitemap.xml','utf8')).includes('<loc>https://xcangelwatch.github.io/AngelFleetPRD/</loc>'),'sitemap must include canonical site');
-assert(source.includes(`设计版本 ${siteMeta.version} · 审查基线 ${siteMeta.baselineDate}`),'Document header must use site metadata values');
+assert(source.includes(`设计版本 ${siteMeta.version} · 实施状态：实施设计，待 P0–P6 分阶段验收`),'Document header must use site metadata version and final status');
 const ids = [...html.matchAll(/\bid="([^"]+)"/g)].map(match => match[1]);
 assert.equal(ids.length,new Set(ids).size,'Duplicate element IDs');
 for (const [,hash] of html.matchAll(/href="#([^"]+)"/g)) assert(ids.includes(hash),`Missing anchor: ${hash}`);
@@ -97,7 +97,7 @@ const externalUrls = [...source.matchAll(/https:\/\/[^)\s]+/g)].map(match => mat
 assert(externalUrls.length > 100 && externalUrls.every(url => { try { return new URL(url).protocol === 'https:'; } catch { return false; } }),'External references must be valid HTTPS URLs');
 assert(html.includes(`v${manifest.version}`));
 assert(html.includes(manifest.status));
-assert(html.includes(manifest.baselineDate) && html.includes(manifest.publicationDate));
+assert(html.includes(`设计版本 ${manifest.version}`) && html.includes(manifest.status));
 assert(html.includes('property="og:image"') && html.includes('name="twitter:card"'));
 assert(html.includes('lang="zh-CN"'));
 assert(!/(?:href|src)="(?:http:\/\/(?:localhost|127\.0\.0\.1)|\/src\/)/.test(html),'Preview-only resource URL was published');

@@ -119,13 +119,13 @@ const html = `<!doctype html>
     <button class="search-trigger" type="button">${searchIcon}<span>搜索方案</span><kbd>⌘ / Ctrl K</kbd></button>
     <h2 class="contents-title">技术方案</h2><nav class="toc" aria-label="主体章节">${mainNav.join('')}</nav>
     <h2 class="contents-title">参考附录</h2><nav class="toc" aria-label="附录">${appendixNav.join('')}</nav>
-    <div class="sidebar-footer">设计基线 · ${escape(siteMeta.baselineDate)}<br>公开发布 · ${escape(siteMeta.publicationDate)}<br><a href="technical-plan.md" download>下载完整方案</a></div>
+    <div class="sidebar-footer">设计版本 · ${escape(siteMeta.version)}<br>发布状态 · ${escape(siteMeta.status)}<br><a href="technical-plan.md" download>下载完整方案</a></div>
   </aside>
   <main class="article-wrap" id="main">
     <article class="document">
-      <header class="document-header"><div class="breadcrumb"><a href="${repo}">AngelFleet</a> / 技术方案</div><h1>${escape(title)}</h1><div class="document-meta"><span>设计版本 ${escape(siteMeta.version)}</span><span>审查基线 ${escape(siteMeta.baselineDate)}</span><span class="design-status">${escape(siteMeta.status)}</span></div></header>
+      <header class="document-header"><div class="breadcrumb"><a href="${repo}">AngelFleet</a> / 技术方案</div><h1>${escape(title)}</h1><div class="document-meta"><span>设计版本 ${escape(siteMeta.version)}</span><span class="design-status">${escape(siteMeta.status)}</span></div></header>
       <div class="intro">${introHtml}</div>
-      <div class="publication-note">本页发布于 ${escape(siteMeta.publicationDate)}，保留 ${escape(siteMeta.baselineDate)} 的代码审查与设计基线。方案公开不代表平台功能、真实节点链路或单租户容量验收已完成。</div>
+      <div class="publication-note">这是公开设计方案，状态为“${escape(siteMeta.status)}”。方案公开不代表平台功能、真实节点链路或单租户容量验收已完成。</div>
       ${rendered.map(({heading,html}) => `<section class="chapter" id="chapter-${heading.id}" aria-labelledby="${heading.id}">${html}</section>`).join('\n')}
       <footer class="document-footer"><span>AngelFleet PRD · 设计版本 ${escape(siteMeta.version)}</span><span><a href="technical-plan.md" download>下载 Markdown</a> · <a href="${repo}/blob/main/docs/technical-plan.md">查看源文档</a> · <a href="#top">返回文档开头</a></span></footer>
     </article>
