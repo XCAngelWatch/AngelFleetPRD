@@ -62,6 +62,10 @@ jobs:
           PAGE_URL="${PAGE_URL%/}/"
           curl --fail --silent --show-error --retry 5 --retry-delay 5 "$PAGE_URL" -o /tmp/angelfleet-index.html
           curl --fail --silent --show-error --retry 5 --retry-delay 5 "${PAGE_URL}build-manifest.json" -o /tmp/angelfleet-manifest.json
+          curl --fail --silent --show-error --retry 5 --retry-delay 5 "${PAGE_URL}platform-constraints.md" -o /tmp/angelfleet-platform-constraints.md
+          curl --fail --silent --show-error --retry 5 --retry-delay 5 "${PAGE_URL}angelfleetprd-threat-model.md" -o /tmp/angelfleet-threat-model.md
           VERSION="$(node -p "JSON.parse(require('fs').readFileSync('/tmp/angelfleet-manifest.json')).version")"
           grep -q "v${VERSION}" /tmp/angelfleet-index.html
-          node -e "const m=require('/tmp/angelfleet-manifest.json'); if(m.chapters.length < 20 || m.diagrams < 8) process.exit(1)"
+          node -e "const m=require('/tmp/angelfleet-manifest.json'); const docs=['platform-constraints.md','angelfleetprd-threat-model.md']; if(m.chapters.length < 20 || m.diagrams < 8 || JSON.stringify(m.supportingDocs)!==JSON.stringify(docs)) process.exit(1)"
+          grep -q "Cloudflare 平台约束快照" /tmp/angelfleet-platform-constraints.md
+          grep -q "AngelFleet PRD 威胁模型" /tmp/angelfleet-threat-model.md

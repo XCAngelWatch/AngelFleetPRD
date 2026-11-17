@@ -11,11 +11,15 @@
 ## 阅读与维护
 
 - [完整技术方案](docs/technical-plan.md) 是内容源文件。
+- [文档目录](docs/README.md) 说明每个结果文件的职责、权威性和推荐阅读顺序。
+- [Cloudflare 平台约束快照](docs/platform-constraints.md) 集中记录官方限制、抓取日期和 P0 复核规则。
+- [威胁模型](docs/angelfleetprd-threat-model.md) 分开描述当前静态发布链和目标控制面的安全边界。
 - [Go 操作改造台账](docs/operation-ledger.md) 是 P0 起始清单，未标记为已完成。
 - [命令状态定义](docs/command-state.json) 是状态图与转移检查使用的机器可读基线。
 - [验收 ID 注册表](docs/acceptance-ids.json) 是 AC/FI/CAP/NET/DEV/P6 验收编号的唯一登记来源。
 - [站点元数据](docs/site-meta.json) 是版本、审查基线和公开日期的唯一来源。
 - [在线文档站](https://xcangelwatch.github.io/AngelFleetPRD/) 支持章节导航、全文搜索、流程图、打印和 Markdown 下载。
+- 生成结果统一位于 `dist/`：源文档、机器契约、平台约束、威胁模型和 `build-manifest.json` 均由 `npm run build` 生成。
 - 修改内容时编辑 `docs/technical-plan.md`；网站由构建脚本生成，勿直接修改 `dist/`。
 - 更新方案结论时，应同步标明新的代码基线、审查日期和验收证据。发布网页与实施验收应分别记录。
 

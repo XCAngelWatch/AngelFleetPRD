@@ -10,6 +10,7 @@ const stateDefinition = JSON.parse(await readFile('docs/command-state.json','utf
 const builtStateDefinition = JSON.parse(await readFile('dist/command-state.json','utf8'));
 const acceptanceRegistry = JSON.parse(await readFile('docs/acceptance-ids.json','utf8'));
 const builtAcceptanceRegistry = JSON.parse(await readFile('dist/acceptance-ids.json','utf8'));
+const supportingDocs = ['platform-constraints.md','angelfleetprd-threat-model.md'];
 const searchData = JSON.parse(html.match(/<script id="search-data" type="application\/json">([\s\S]*?)<\/script>/)?.[1] ?? 'null');
 const bodyChapterCount = (source.match(/^# \d+\./gm) || []).length;
 const appendixCount = (source.match(/^# 附录 [A-E]/gm) || []).length;
@@ -19,6 +20,7 @@ assert.equal(manifest.appendices,appendixCount,'Manifest appendix count must fol
 assert.equal(manifest.sourceSha256,createHash('sha256').update(source).digest('hex'),'Build does not match current source');
 assert.equal(await readFile('dist/technical-plan.md','utf8'),source,'Download must match repository source');
 assert.equal(await readFile('dist/operation-ledger.md','utf8'),await readFile('docs/operation-ledger.md','utf8'),'Operation ledger download must match repository source');
+for (const document of supportingDocs) assert.equal(await readFile(`dist/${document}`,'utf8'),await readFile(`docs/${document}`,'utf8'),`${document} download must match repository source`);
 assert.deepEqual(builtStateDefinition,stateDefinition,'Command state fixture must match repository source');
 assert.deepEqual(builtAcceptanceRegistry,acceptanceRegistry,'Acceptance ID registry must match repository source');
 assert.equal(await readFile('dist/404.html','utf8'),html,'404 page must use the generated document shell');
@@ -40,6 +42,7 @@ assert.equal(manifest.diagrams,manifest.diagramSources,'Manifest diagram count m
 assert(manifest.diagrams >= 8,'Expected the baseline diagrams plus the public flow diagrams');
 assert.equal(manifest.searchRecords,searchData.length,'Search manifest count must match embedded index');
 assert.equal(manifest.acceptanceIds,Object.keys(acceptanceRegistry.ids).length,'Manifest acceptance ID count must match registry');
+assert.deepEqual(manifest.supportingDocs,supportingDocs,'Manifest supporting documents must match the publication set');
 assert(searchData.every(record => ids.includes(record.id)),'Search index contains an unknown anchor');
 const diagramBlocks = [...source.matchAll(/```mermaid\s*\n([\s\S]*?)```/g)].map(match => match[1].trim());
 assert.equal(diagramBlocks.length,manifest.diagramSources,'Every Mermaid source must be counted');

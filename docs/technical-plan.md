@@ -2,9 +2,24 @@
 
 复用 XCtechResource 的 React/Next.js 前端工程与 Cloudflare 服务基础，迁移 1Panel v2 的完整运维功能。Go 的容器、网站、数据库、文件、备份及主机执行能力继续复用。首版以 XC React 控制台、Cloudflare 控制面、connector 和原 core/agent 完成功能闭环；原 core 最终退役单列后续阶段。本文聚焦功能范围、代码复用边界、接口协议、数据归属、迁移步骤和验收，不纳入定价与费用模型。
 
-**设计版本 2.3 · 审查基线 2026-11-12 · 2.2 评审校正、验收注册表、安全门禁与 schema 闭环基线**
+**设计版本 2.3 · 审查基线 2026-11-12 · 2.3 评审校正、验收注册表、安全门禁与 schema 闭环基线**
 
 1Panel 源码基线固定为 2026-11-12 审查时与远端 dev-v2 核对一致的 `cedb8ddda9254bdef0fddba96b7fa59c6ab8c633`，提交时间为北京时间 2026 年 11 月 12 日 14:22:38；相比原方案的 `daae8c43` 增加 84 个提交。XCtechResource 以 2026-11-12 审查时的工作树为复用输入，其 HEAD 为 `641b8b1`，工作树含未提交修改，实施前需独立固定可复现版本。以下复用与改造安排属于实施设计，完成状态以各阶段功能验收为准。[1Panel 固定源码](https://github.com/1Panel-dev/1Panel/commit/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633)
+
+## 阅读路径与权威来源
+
+先读本页的架构决策、功能完成标准和迁移路线，再按实施问题进入对应权威工件。摘要章节只说明边界和决策，协议、源码事实和机器可读定义不在摘要章节重复展开。
+
+| 你要回答的问题 | 先看 | 权威来源 |
+|---|---|---|
+| 方案是否可行、首版保留什么 | §1、§5、§14 | 本文决策摘要 |
+| Cloudflare 限制与容量怎么验收 | §15.1、§15.3.5 | [`docs/platform-constraints.md`](platform-constraints.md) 与官方链接 |
+| 注册、授权、命令、终端和文件协议怎么实现 | 附录 A | A.2–A.12；状态边统一以 [`docs/command-state.json`](command-state.json) 为准 |
+| Go/1Panel 现有功能如何迁移 | §13 | 附录 B 与 [`docs/operation-ledger.md`](operation-ledger.md) |
+| 数据表、操作和错误码如何落地 | 附录 C | C.1–C.3；构建检查负责字段和台账一致性 |
+| 产品需求、生命周期和验收如何追踪 | 附录 D | D.1–D.5 与 [`docs/acceptance-ids.json`](acceptance-ids.json) |
+| OTA/Yocto 是否进入首版 | 附录 E | E.1–E.4，默认是候选扩展 |
+| 安全边界和攻击路径 | 安全模型文件 | [`docs/angelfleetprd-threat-model.md`](angelfleetprd-threat-model.md)；目标控制面与当前静态站点分开描述 |
 
 # 1. 架构决策与交付边界
 
@@ -102,9 +117,9 @@ DO 使用服务端 `ctx.acceptWebSocket()` 接受连接以支持休眠。connect
 | 容量 | 单租户 10k 与多租户对照分别达到冻结的混合负载和持续运行门禁 | CAP 独立报告，模拟与真实节点覆盖分开 |
 | 后续 core 退役 | P6 独立完成无 core 的安装、启动、升级和恢复 | 附录 B 清单，另行接受 |
 
-运行边界仍需落实到实现：控制 API 与文件传输分离，D1 保存控制元数据和必要索引，节点保留资源事实；原始日志和大文件使用独立通道。单租户热库、授权路径和恢复积压须独立验证；分库并不自动解决热租户吞吐。[D1 平台限制](https://developers.cloudflare.com/d1/platform/limits/)
+运行边界只保留三条实现原则：控制 API 与文件传输分离，D1 保存控制元数据和必要索引，节点保留资源事实；原始日志和大文件走独立通道；单租户热库、授权路径和恢复积压必须独立验证。Cloudflare 数字、套餐和复核日期集中见 [`docs/platform-constraints.md`](platform-constraints.md)。
 
-Workers 的 CPU、内存和请求体限制需要在 API 和文件设计中落实。普通控制消息初始限制 64KiB，大内容使用对象引用。使用流式处理时仍设置应用层总量、时长和缓冲预算。[Workers 平台限制](https://developers.cloudflare.com/workers/platform/limits/)
+Workers 的平台边界与套餐数字集中见 [`docs/platform-constraints.md`](platform-constraints.md)。产品仍以普通控制消息初始 64KiB、大内容使用对象引用、流式处理设置应用层总量/时长/缓冲预算为设计约束；这些应用预算不能替代平台限制。
 
 # 6. 租户分库、数据归属与一致性
 
@@ -212,17 +227,15 @@ XC React 页面使用新的领域 API，显式携带稳定 tenantId、nodeId、c
 
 Panel MCP 在云端提供凭据、工具目录、admission、节点范围和审计，工具操作映射到同一 operation registry。当前进程内 dispatch 改成明确的节点调用，输出大小设限，大结果返回受控对象引用。现有 agent 内部 Docker/website 能力优先复用。AI MCP 服务器管理继续作为节点业务，单独验收其进程、配置和凭据。工具调用产生的破坏性动作遵循与普通 API 相同的权限和恢复规则。[现有 MCP dispatch](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/core/utils/mcpapi/dispatch.go)
 
-任务状态与通知交付采用附录 A 的 outbox、journal、eventSequence 和 revision。节点副作用与 SQLite 无法构成跨系统原子事务，副作用后断电进入 UNCERTAIN，先查询现场，无法判定时进入 REVIEW_REQUIRED。批量任务保留父任务、子任务和每节点结果，部分成功可以独立重试失败子项。
-
-首版执行适配器持久保存 cloudCommandId、nodeId、nodeIncarnation、operation、intentHash、localTaskId、checkpoint 与结果摘要。调用 Go 接口前记录执行意图；请求发出后响应丢失时，优先按原 taskId、业务标记或现场证据查回结果。没有可恢复关联的非幂等操作必须补 Go hook 或执行标记，不能靠 connector 自动重复调用来宣称可靠。 对已有可传 taskId 的入口，先生成并持久保存稳定关联，再调用 Go；对执行器内部生成 ID 的入口，增加按 cloudCommandId/operationMarker 查回任务的机制。进度、取消、最终结果与清理均沿用这一关联。故障测试必须覆盖调用前、Go 已启动但响应未保存、结果已生成但云端未确认三个边界。[当前 Go 异步执行](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/agent/app/service/app_install.go)
+任务状态、幂等、取消、未知结果和恢复以附录 A.5–A.6、C.1–C.3 为唯一执行语义。本节只保留适配边界：适配器必须持久保存 `cloudCommandId`、`nodeIncarnation`、`intentHash`、`localTaskId` 或 `operationMarker`、checkpoint 和结果摘要；调用前先记录意图，响应丢失时查询原任务或现场证据，不能自动创建第二个未知副作用。无稳定关联的非幂等入口必须补 Go hook，并覆盖调用前、Go 已启动但回执丢失、结果已生成但云端未确认三个故障点。[当前 Go 异步执行](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/agent/app/service/app_install.go)
 
 # 9. 终端、实时流与国内链路
 
 每次终端创建产生独立 terminalId 和 Relay。connector 经控制连接收到 prepare 后主动建立另一条 WSS，浏览器使用独立角色票据加入。两端就绪后，由节点适配器创建或重附着原 Go PTY/SSH/容器 exec。日志尾随、进程流与 VM console 共用授权和会话生命周期，但采用各自的数据适配器。
 
-SSH 保留原 Go SSH/PTY 实现及终端交互语义，界面使用 XC React 与适用的终端底层库。当前 SSH 客户端使用 `InsecureIgnoreHostKey()`，可信 host key 登记、固定校验、变更阻断与恢复 UI 属于确定的适配工作。初始信任来自安装时采集、受信镜像或运维核验，不能自动接受未知主机密钥；维护账户与凭据使用 accountRef，长期私钥不进入浏览器。local PTY、到本机 SSH、跨主机 SSH 和容器 exec 分别声明目标、账户与权限。[当前 SSH 客户端](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/agent/utils/ssh/ssh.go)
+SSH 保留原 Go SSH/PTY 实现及终端交互语义，界面使用 XC React 与适用的终端底层库。当前客户端使用 `InsecureIgnoreHostKey()`，因此在 P0 完成可信 host key 登记、固定校验、变更阻断和恢复 UI 前，SSH 适配不得标记为 `ACCEPTED`；未知主机密钥必须 fail-closed。维护账户与凭据使用 accountRef，长期私钥不进入浏览器。local PTY、到本机 SSH、跨主机 SSH 和容器 exec 分别声明目标、账户与权限。[当前 SSH 客户端](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/agent/utils/ssh/ssh.go)
 
-初版建议每节点并发终端上限 8，二进制帧 16–32KiB，每方向未确认数据 256KiB，每会话缓冲 1MiB。节点适配器与 Go 终端执行器共同采用 credit 控制 PTY 输出读取，慢浏览器导致该会话暂停或关闭。控制连接与实时流独立，避免大输出占用同一队列。恢复只重放保留窗口内的输出，未确认输入交由用户明确处理。
+终端并发、帧大小、credit、缓冲和断线恢复参数集中见附录 A.9；本节只强调控制连接与实时流分离，慢浏览器不得拖垮节点控制通道，未确认输入不得自动重放。
 
 国内代理建立受控 CONNECT/L4 转发，海外节点直接接入。代理需覆盖长连接空闲超时、并发配额、连接速率、DNS、TLS与故障切换。R2 与安装包下载另设 egress 路由和带宽预算。代理可以改善可达性，终端体验仍由浏览器、Cloudflare 边缘、DO 所在区域、代理和 agent 的完整路径决定。
 
@@ -234,11 +247,7 @@ DO locationHint 是尽力而为的位置提示，不能据此保证城市级位�
 
 XC 复用账号、组织、租户、权限树与登录页面，认证实现适配为同域 Cookie 会话，配置 HttpOnly、Secure、SameSite，并实施服务端 CSRF、Origin 和会话撤销校验。当前 XC 的浏览器 Bearer/sessionStorage 实现不视为该目标已经完成。密码、MFA、passkey、API Key、账号恢复与应急管理均列入功能迁移。角色与资源权限基于服务端权限点，扩展到节点组、具体节点、容器、文件、终端和备份；原本地 1Panel 用户不直接等同于 SaaS 租户用户。
 
-用户会话撤销、成员移除、API Key 撤销、节点停用分别提升授权或凭据版本，持久写入撤销事件并主动通知连接。终端在 agent 与 Relay 共同检查租约和撤销版本。建链和续租执行完整授权，每帧检查本地固定绑定、角色、代次与租期。新 v1 API Key 采用高熵 opaque bearer，云端保存摘要、权限、有效期和节点范围。现有 HMAC API 调用方迁移时重新签发 v1 Key。确需兼容旧签名的过渡端点加密保存验证所需共享密钥，并单列退役时间和兼容测试。
-
-全局身份撤销与租户成员撤权不能假设跨库原子：各权威存储先持久提升版本并记录 outbox，建链和续租核验双方有效状态，无法验证时停止新授权。节点业务停用与密钥吊销分别处理。停用后仅允许仍有效身份在受限通道提交既有任务结果及核对，禁止新命令和终端；已吊销密钥不能继续授权该通道，结果留在本地，待受控身份恢复后对账。已经发生的主机动作不能因停用而标成已取消。
-
-节点使用本地密钥对与一次性 enrollment。短期连接凭证绑定 tenant、node、keyVersion 与用途。终端票据绑定单角色、单会话、单代次并原子消费。长期密钥轮换保留短重叠窗口，旧版本撤销后停止新建链和续租。票据、预签名 URL 和完整凭据从日志中脱敏。凭据方案的具体算法与运行时支持在 PoC 固定。
+用户会话撤销、成员移除、API Key 撤销、节点停用分别提升授权或凭据版本并写入 outbox；建链和续租必须核验有效版本，无法验证时停止新授权。节点注册、短期连接凭证、终端角色票据、密钥轮换和租约以附录 A.2、A.7、A.8 为协议权威；本节只保留产品边界：停用禁止新命令和终端，已发生主机动作不能被改写成取消，票据和秘密不得进入日志。
 
 主机私钥与节点执行所需秘密优先留在节点。确需云端保存的 DNS、备份或通知凭据采用版本化信封加密，KEK 由受控 secrets 配置持有，密文携带 keyVersion，轮换按批次重包裹。密钥取用记录主体、用途和资源，前端仅回显掩码。审计保留时间、终端录制与导出权限由租户策略明确设置。
 
@@ -246,7 +255,7 @@ XC 复用账号、组织、租户、权限树与登录页面，认证实现适�
 
 上传流程为创建 artifact → 分片授权 → R2 上传 → complete → 校验 → READY。对象 key 由服务端生成，关联 tenantId、artifactId 和用途。agent 使用前检查 SHA-256、大小与操作目标，先写临时文件，完成校验后再原子替换。路径类操作复用并补测 agent 的目录边界、符号链接、权限和并发修改处理。取消操作清理分片与节点临时文件。
 
-R2 预签名 URL 使用 S3 API 域名，普通预签名机制与自定义域名需要分别处理。浏览器直传配置精确 CORS。大对象使用 multipart，multipart ETag 不能替代整文件摘要。备份恢复必须覆盖从云端索引到 R2 对象再到真实节点恢复的闭环。[R2 预签名 URL](https://developers.cloudflare.com/r2/api/s3/presigned-urls/)、[R2 multipart](https://developers.cloudflare.com/r2/objects/multipart-objects/)
+R2 预签名 URL、CORS、multipart 和 SHA-256 校验的协议细节以附录 A.10 为准；本节只要求浏览器直传严格绑定租户与对象，备份恢复覆盖云端索引、R2 对象和真实节点三段闭环。
 
 监控分为链路存活、agent 健康、业务指标和长期历史。协议 ping 或自动应答维护传输，60 秒业务心跳更新 DO 当前健康，连接存续期间使用 WebSocket attachment 保存 lastSeenAt 与健康摘要，休眠重建时恢复。连接关闭后重新握手与采样，持久存储只记录必要的状态变化和业务事件。D1 默认每 300 秒按 tenantId/nodeId 覆盖更新一行最新摘要，并将各节点写入时间打散；状态变化事件独立保存。60 秒业务上报不等于每次都写入 D1。用户打开实时页面时建立有期限的高频订阅，关闭页面即降频。节点列表同时显示 lastSeenAt、sampledAt 和 stale，避免把缓存摘要误判为在线。
 
@@ -512,9 +521,9 @@ leaseUntil <= min(
 
 命令投递不能把 Queues 当作有界低延迟通道。官方默认 `max_batch_size=10`、`max_batch_timeout=5s`，单条失败默认可能导致批次重投；即使设置 `max_batch_timeout=0`，官方 Workflows 示例也说明队列交付通常需要数秒，偶尔可能超过一分钟。因此 `online command persistent receive p95≤2s` 只绑定提交后的控制面直连快路径：TenantData/控制 API 在 D1 提交成功后，以有界超时调用对应 AgentConn 的 `dispatchKick(commandId, eventId, revision)` RPC；DO 再执行 `beginDispatch`、持久化准入并通过已建立的 WSS 投递。直连失败不丢失意图，持久 outbox 仍经 Queues 消费者补偿，补偿路径单独报告分位数和 `oldestOutboxAge`，不得与 2 秒目标混算。命令 Queue 在 P0 冻结 `max_batch_size=1`、`max_batch_timeout=0`，逐条 `ack()`；低负载、峰值、队列交付延迟、直连失败、重复 kick 和故障恢复分别压测。[Queues 批处理与重试](https://developers.cloudflare.com/queues/configuration/batching-retries/)、[Queues 触发 Workflows 示例](https://developers.cloudflare.com/workflows/examples/trigger-from-webhook/)
 
-CAP-01 以单租户 D1 和每节点 AgentConn 为主要容量风险。D1 单库逐条处理查询，额外请求开销不计入 SQL 时长，过载可能返回 `overloaded`；单库上限 10GB 且不可提升。Workers Paid 每次 Worker 调用最多 1000 个 D1 查询，`db.batch()` 按一次查询计数；Workers/DO 每次请求最多 6 个同时出站连接，这些是调用级限制，不应误写成单个 D1 的固定并发连接数。实验记录授权缓存命中率、真实 SQL/批次数、排队时延、`rows_read/rows_written`、事件和审计增长、归档阈值与恢复余量。负载预算不能把 333 次逻辑授权检查直接当成 333 条 SQL；必须证明缓存命中和 batch 后的串行时间总和低于 1 秒并留有恢复余量。[D1 限制](https://developers.cloudflare.com/d1/platform/limits/)、[Workers 限制](https://developers.cloudflare.com/workers/platform/limits/)
+CAP-01 以单租户 D1 和每节点 AgentConn 为主要容量风险。平台限制、套餐、抓取日期和官方链接集中见 [`docs/platform-constraints.md`](platform-constraints.md)；本节只规定实验口径：记录授权缓存命中率、真实 SQL/批次数、排队时延、`rows_read/rows_written`、事件和审计增长、归档阈值与恢复余量。负载预算不能把 333 次逻辑授权检查直接当成 333 条 SQL；必须证明缓存命中和 batch 后的串行时间总和低于 1 秒并留有恢复余量。
 
-实现层面补充负向用例：单行/字符串/BLOB 超过 2MB、查询结果超过 50MB、单语句超过 100KB、绑定参数超过 100、batch 超过 30 秒、单次 Queue 消息超过 128KB、`sendBatch` 超过 100 条或 256KB、Queue 单队列超过 5,000 msg/s、队列积压超过 25GB、消费者并发达到 250；记录 `overloaded`、`SQLITE_FULL`、队列限流、排队时延和清空时间。SQLite-backed DO Paid 单对象存储上限是 10GB，单行/键值上限是 8MB，收到的单条 WebSocket 消息上限是 32MiB，单对象约 1,000 req/s 是软上限；AgentConn 的 64MiB 只是应用层未确认结果预算，不是平台上限。10,000 个对象同时达到该预算约 625GiB/671.09GB，是积压容量压力测试的理论值，不是正常内存占用。高水位 48MiB 时暂停新普通任务，保留结果确认、撤销、取消、健康恢复和对账通道；DO 达到存储上限时写入失败但读与 DELETE 仍可用，故障矩阵必须验证清理与恢复。摘要为每节点覆盖一行，存储增长预算应单算 commands、events、audit、tombstone、索引和故障积压，不把摘要写次数当新增行数。费用模型仍不属于本文。[Queues 限制](https://developers.cloudflare.com/queues/platform/limits/)、[Durable Objects 限制](https://developers.cloudflare.com/durable-objects/platform/limits/)
+实现层面仍要逐项压测平台负向边界，具体数字以 [`docs/platform-constraints.md`](platform-constraints.md) 的快照为准；记录 `overloaded`、`SQLITE_FULL`、队列限流、排队时延和清空时间。AgentConn 的 64MiB 只是应用层未确认结果预算，不是平台上限；10,000 个对象同时达到该预算约 625GiB/671.09GB，是积压容量压力测试的理论值，不是正常内存占用。高水位 48MiB 时暂停新普通任务，保留结果确认、撤销、取消、健康恢复和对账通道；DO 达到存储上限时写入失败但读与 DELETE 仍可用，故障矩阵必须验证清理与恢复。摘要为每节点覆盖一行，存储增长预算应单算 commands、events、audit、tombstone、索引和故障积压，不把摘要写次数当新增行数。费用模型仍不属于本文。
 
 ### 15.3.6 R7 Go 操作台账、R8 术语与 R9 参数冻结
 
@@ -880,7 +889,7 @@ sequenceDiagram
 
 agent 保存最近 1 MiB 或 30 秒的终端输出用于短暂断线恢复，先到上限者优先。恢复请求携带最后已消费输出序号。超出保留窗口时显示明确的历史缺口，由用户选择重绘、重新进入全屏程序或新建终端，产品不能保证自动恢复 vim 等程序的完整屏幕状态。对于确认状态未知的输入，客户端不会自动重放按键或整条 shell 命令，以免重复执行。终端恢复与任务执行恢复分别处理。
 
-建议增加以下初始容量边界，并在压测中调整。单条结果内联正文上限 64 KiB，较大输出写 R2 或 agent 日志对象。每节点待投递上限为 1,000 条或 8 MiB，先到者触发限流。AgentConn 未确认结果持久缓存上限 64 MiB，高水位 48 MiB 时暂停新普通任务，保留结果确认、撤销、取消、健康恢复与对账通道；这两个数是应用预算，不是 Durable Objects 的平台上限。SQLite-backed DO Paid 单对象存储上限为 10GB、单行/键值上限为 8MB，收到的单条 WebSocket 消息上限为 32MiB，单对象约 1,000 req/s 是软上限；结果按低于 8MB 的记录或对象分块保存。agent 为 journal 维护至少 50 MiB 的应急磁盘余量，接近阈值时拒绝新副作用任务并继续保存已有任务的最终状态。DO 达到存储上限时写入失败但读取和 DELETE 仍可用，故障处理应先暂停普通写入、保留确认与撤销通道，再按保留策略清理可删除数据。容量不足不能通过删除未确认结果或未过期 tombstone 来释放空间。正文、恢复元数据与去重 tombstone 分开设置保留策略。[Durable Objects 限制](https://developers.cloudflare.com/durable-objects/platform/limits/)
+建议增加以下应用容量边界，并在压测中调整。单条结果内联正文上限 64 KiB，较大输出写 R2 或 agent 日志对象；每节点待投递上限为 1,000 条或 8 MiB；AgentConn 未确认结果持久缓存上限 64 MiB，高水位 48 MiB 时暂停新普通任务。这些是应用预算，不是平台上限。Cloudflare DO、WebSocket、SQL 和出站连接限制集中见 [`docs/platform-constraints.md`](platform-constraints.md)，结果按平台边界分块保存。agent 为 journal 维护至少 50 MiB 的应急磁盘余量，接近阈值时拒绝新副作用任务并继续保存已有任务的最终状态。容量不足不能通过删除未确认结果或未过期 tombstone 来释放空间；正文、恢复元数据与去重 tombstone 分开设置保留策略。
 
 控制连接建议由 agent 每 30 秒发送 WebSocket 协议 ping，Cloudflare 自动应答且不唤醒 DO。固定字符串应用 ping/pong 可用 `setWebSocketAutoResponse`。业务健康建议每 60 秒汇报一次摘要，用户打开监控页时按订阅短时提高频率。在线状态区分 transportConnected、agentHealthy、lastSeenAt 和 stale，平台自动 pong 只代表连接通路可用。[DO 心跳与休眠](https://developers.cloudflare.com/durable-objects/best-practices/websockets/)、[自动应答 API](https://developers.cloudflare.com/durable-objects/api/state/)
 

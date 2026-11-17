@@ -143,6 +143,8 @@ await writeFile('dist/.nojekyll','');
 await copyFile('src/site.css','dist/assets/site.css');
 await copyFile('docs/technical-plan.md','dist/technical-plan.md');
 await copyFile('docs/operation-ledger.md','dist/operation-ledger.md');
+await copyFile('docs/platform-constraints.md','dist/platform-constraints.md');
+await copyFile('docs/angelfleetprd-threat-model.md','dist/angelfleetprd-threat-model.md');
 await copyFile('docs/command-state.json','dist/command-state.json');
 await copyFile('docs/acceptance-ids.json','dist/acceptance-ids.json');
 await writeFile('dist/assets/favicon.svg','<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="6" fill="#143b40"/><path d="M6 24 16 6l10 18H6Z" fill="none" stroke="#e7f4f4" stroke-width="2"/><path d="M11 18h10M16 18v9" stroke="#e7f4f4" stroke-width="2"/></svg>');
@@ -168,7 +170,7 @@ for (const name of [...packages].sort()) {
   }
 }
 await writeFile('dist/licenses/README.md',notices.join('\n')+'\n');
-const manifest = {version:siteMeta.version,baselineDate:siteMeta.baselineDate,publicationDate:siteMeta.publicationDate,status:siteMeta.status,sourceSha256:createHash('sha256').update(source).digest('hex'),chapters:rendered.map(({heading}) => ({id:heading.id,title:heading.title})),bodyChapters:mainNav.length,appendices:appendixNav.length,headings:headings.length,diagrams:diagramCount,diagramSources:(source.match(/^```mermaid$/gm) || []).length,searchRecords:searchRecords.length,acceptanceIds:Object.keys(acceptanceIds.ids).length};
+const manifest = {version:siteMeta.version,baselineDate:siteMeta.baselineDate,publicationDate:siteMeta.publicationDate,status:siteMeta.status,sourceSha256:createHash('sha256').update(source).digest('hex'),chapters:rendered.map(({heading}) => ({id:heading.id,title:heading.title})),bodyChapters:mainNav.length,appendices:appendixNav.length,headings:headings.length,diagrams:diagramCount,diagramSources:(source.match(/^```mermaid$/gm) || []).length,searchRecords:searchRecords.length,acceptanceIds:Object.keys(acceptanceIds.ids).length,supportingDocs:['platform-constraints.md','angelfleetprd-threat-model.md']};
 await writeFile('dist/build-manifest.json',JSON.stringify(manifest,null,2)+'\n');
 await removeAppleDoubleFiles('dist');
 console.log(`Built ${rendered.length} chapters, ${headings.length} headings, ${diagramCount} diagrams and ${searchRecords.length} search sections.`);
