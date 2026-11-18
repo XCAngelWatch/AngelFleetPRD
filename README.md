@@ -11,6 +11,7 @@
 ## 阅读与维护
 
 - [完整技术方案](docs/technical-plan.md) 是内容源文件。
+- [技术详细设计](docs/technical-design.md) 以服务重启为例说明端到端执行与故障对账，另附节点注册、终端撤权和文件校验的联调场景。
 - [文档目录](docs/README.md) 说明每个结果文件的职责、权威性和推荐阅读顺序。
 - [Cloudflare 平台约束快照](docs/platform-constraints.md) 集中记录官方限制、抓取日期和 P0 复核规则。
 - [威胁模型](docs/angelfleetprd-threat-model.md) 分开描述当前静态发布链和目标控制面的安全边界。
@@ -20,7 +21,7 @@
 - [站点元数据](docs/site-meta.json) 是站点版本、发布状态和构建元数据的唯一来源。
 - [在线文档站](https://xcangelwatch.github.io/AngelFleetPRD/) 支持章节导航、全文搜索、流程图、打印和 Markdown 下载。
 - 生成结果统一位于 `dist/`：源文档、机器契约、平台约束、威胁模型和 `build-manifest.json` 均由 `npm run build` 生成。
-- 修改内容时编辑 `docs/technical-plan.md`；网站由构建脚本生成，勿直接修改 `dist/`。
+- 主方案与技术详细设计分别维护在各自的 Markdown 源文件中，运行构建后即可更新阅读页面。
 - 更新方案结论时，应同步更新代码复用输入、验收证据和机器契约；发布网页与实施验收分别核对。
 
 ## 本地构建

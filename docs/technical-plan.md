@@ -68,6 +68,7 @@ flowchart LR
 | 你要回答的问题 | 先看 | 权威来源 |
 |---|---|---|
 | 方案是否可行、首版保留什么 | §1、§5、§14 | 本文决策摘要 |
+| 一次服务重启从点击到回执如何联调，断线后怎么判断是否已经执行 | [技术详细设计](technical-design.md) | 附录 A.4–A.6、C.2–C.3 与 Go 操作台账 |
 | Cloudflare 限制与容量怎么验收 | §15.1、§15.3.5 | [`docs/platform-constraints.md`](platform-constraints.md) 与官方链接 |
 | 注册、授权、命令、终端和文件协议怎么实现 | 附录 A | A.2–A.12；状态边统一以 [`docs/command-state.json`](command-state.json) 为准 |
 | Go/1Panel 现有功能如何迁移 | §13 | 附录 B 与 [`docs/operation-ledger.md`](operation-ledger.md) |

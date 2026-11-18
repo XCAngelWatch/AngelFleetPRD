@@ -5,6 +5,7 @@
 | 文件 | 用途 | 权威性 |
 |---|---|---|
 | `technical-plan.md` | 完整 15 章与 A–E 附录；设计决策、迁移范围和验收摘要 | 主文档 |
+| [technical-design.md](technical-design.md) | 服务重启端到端示例、节点注册、终端撤权、制品校验与联调场景 | 实施设计，协议及验收编号引用主文档与机器契约 |
 | `platform-constraints.md` | Cloudflare Workers、D1、DO、Queues、R2 的平台约束快照和官方来源 | 平台数字唯一集中来源 |
 | `angelfleetprd-threat-model.md` | 当前静态发布链与目标控制面的威胁模型 | 安全设计输入，非运行证明 |
 | `command-state.json` | 命令状态集合和 39 条允许转移 | 状态机唯一机器来源 |
@@ -16,8 +17,8 @@
 
 `dist/` 是 GitHub Pages 的唯一发布目录，由构建脚本生成，包含：
 
-- `index.html`、`404.html`、`assets/`：静态阅读页面与流程图资源。
-- `technical-plan.md`、`operation-ledger.md`、`platform-constraints.md`、`angelfleetprd-threat-model.md`：可下载的源文档副本。
+- `index.html`、`technical-design.html`、`404.html`、`assets/`：静态阅读页面与流程图资源。
+- `technical-plan.md`、`technical-design.md`、`operation-ledger.md`、`platform-constraints.md`、`angelfleetprd-threat-model.md`：可下载的源文档副本。
 - `command-state.json`、`acceptance-ids.json`：可下载的机器可读契约。
 - `build-manifest.json`：源文件哈希、章节、图表、搜索记录和验收编号计数。
 - `robots.txt`、`sitemap.xml`：公开站点索引信息。

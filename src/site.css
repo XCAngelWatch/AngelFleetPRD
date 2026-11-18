@@ -45,6 +45,10 @@ input { caret-color: var(--accent); }
 .search-trigger { width: 100%; display: flex; align-items: center; gap: 10px; background: #235058; color: #f5ffff; border: 1px solid #50747a; border-radius: 6px; padding: 10px 12px; text-align: left; font-size: 13px; }
 .search-trigger svg { width: 17px; height: 17px; flex: none; }
 .search-trigger kbd { font-size: 10px; margin-left: auto; color: var(--rail-muted); font-family: inherit; }
+.page-nav { display: flex; align-items: stretch; gap: 3px; padding: 3px; margin-top: 18px; border: 1px solid #50747a; border-radius: 6px; }
+.page-nav a { flex: 1; padding: 8px 4px; color: #d2e1e3; font-size: 13px; line-height: 1.5; text-align: center; text-decoration: none; border-radius: 3px; }
+.page-nav a:hover { background: #244b51; color: white; }
+.page-nav a[aria-current='page'] { background: #f0f7f7; color: #163e44; font-weight: 600; }
 .contents-title { margin: 30px 12px 10px; font-size: 12px; color: var(--rail-muted); font-weight: 500; }
 .toc { display: grid; gap: 3px; }
 .toc a { display: flex; gap: 10px; color: #d2e1e3; text-decoration: none; font-size: 13px; line-height: 1.65; padding: 8px 11px; border-radius: 4px; }
@@ -113,6 +117,7 @@ pre code { font: inherit; }
 .search-results { margin: 0; padding: 0 10px 16px; list-style: none; max-height: 55dvh; overflow: auto; }
 .search-results a { display: block; padding: 14px 12px; text-decoration: none; border-radius: 5px; }
 .search-results a:hover, .search-results a:focus-visible { background: #ecf4f5; }
+.result-page { display: block; margin-bottom: 3px; color: var(--muted); font-size: 12px; }
 .result-title { display: block; color: var(--accent); font-size: 14px; font-weight: 600; }
 .result-preview { display: block; color: var(--muted); font-size: 12px; line-height: 1.8; margin-top: 7px; overflow-wrap: anywhere; }
 .search-results mark { background: #d2e9e8; color: var(--ink); }
@@ -145,6 +150,11 @@ pre code { font: inherit; }
   .mermaid svg { max-width: none !important; min-width: 560px; }
   pre { padding: 38px 15px 18px; font-size: 11px; }
   .back-top { right: 14px; bottom: 14px; padding: 8px 11px; }
+}
+@media screen and (max-width: 760px) and (scripting: none) {
+  .menu-toggle, .search-trigger { display: none; }
+  .sidebar { position: static; width: auto; height: auto; max-height: 40dvh; transform: none; visibility: visible; padding: 12px 18px; }
+  .page-nav { margin-top: 0; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; } }
 @media print {
