@@ -20,7 +20,7 @@ Idempotency-Key: restart-example-01
 }
 ```
 
-首次受理的响应示例只列联调所需字段。`202` 表示控制面已持久保存命令意图。客户端保存原始请求和服务端确定的绝对 `expiresAt`，后续按 `commandId` 查询。
+首次受理时，`202` 表示控制面已持久保存命令意图。客户端记下返回的 `commandId` 和绝对 `expiresAt`，后续按命令 ID 查询进度。
 
 ```http
 HTTP/1.1 202 Accepted
@@ -33,16 +33,16 @@ Content-Type: application/json
 }
 ```
 
-若响应丢失，客户端按原租户、节点、请求体和 key 重发。服务端先核验请求者此刻的授权，再按 `(tenantId, idempotencyKey)` 查收据，依次处理下表。并发的相同请求由收据唯一约束选出一次创建，其余请求读取已提交收据。
+客户端在首次发送前保存租户、节点、原始请求体和 key。即使首个响应在返回 `commandId` 之前丢失，也可用同一请求找回任务。服务端先核验当前授权，再按 `(tenantId, idempotencyKey)` 查收据。并发请求由收据唯一约束选出一次创建，其余请求读取已提交收据。
 
 | 收据判定顺序 | 服务端结果 | XC 后续动作 |
 |---|---|---|
 | 仅余 key guard | `410 IDEMPOTENCY_KEY_EXPIRED` | 停止重试，先从原节点任务记录核对历史结果 |
 | 正文存在，`requestFingerprint` 不同 | `409 IDEMPOTENCY_REQUEST_MISMATCH` | 找回原请求。若用户确实变更了操作意图，重新展示目标供确认 |
 | 指纹相同，`intentHash` 不同 | `409 IDEMPOTENCY_INTENT_MISMATCH` | 保留原命令，核对资源版本、原业务期限和规范化输入 |
-| 两个摘要均一致 | 返回原 `commandId`，`idempotencyReplay=true` | 打开原任务详情，继续跟踪同一次重启 |
+| 两个摘要均一致 | 返回原 `commandId` 和 `expiresAt`，`idempotencyReplay=true` | 打开原任务详情，查看受理时绑定的安装 ID 和执行进度 |
 
-首次创建时 `expiresAt` 和执行意图一并固定。若资源已经变更，页面重新读取服务版本，用户确认新意图后才生成新 key。[主方案 A.4 数据模型与对外 API](technical-plan.md#a4-数据模型与对外-api) · [C.3 统一错误与可观测字段](technical-plan.md#c3-统一错误与可观测字段)
+回放时按首次受理的安装 ID、资源版本和绝对期限核对意图。即使 `website-proxy` 已经改绑，原请求仍定位到原实例的命令。操作员确认要重启新实例时，页面读取新版本并使用新 key。Queue 重投携带原 `eventId` 和 `commandId` 唤醒投递。Compose 一旦可能已启动，节点只读核对现场。[主方案 A.4 数据模型与对外 API](technical-plan.md#a4-数据模型与对外-api) · [C.3 统一错误与可观测字段](technical-plan.md#c3-统一错误与可观测字段)
 
 # 2. 按持久化边界推进任务
 
@@ -93,13 +93,15 @@ sequenceDiagram
 
 | 联调断点 | 恢复动作 | 可对外显示的结论 |
 |---|---|---|
-| WSS 在发送后、`accepted` 到达前断开 | 新连接先持久化并确认更高 epoch，再按原命令查询 journal。旧代次不能启动新动作 | 暂时显示 `RECONCILING` 并保留最后可信状态。已有投递历史的任务只有取得未启动且已过期的证据，才可收敛为 `EXPIRED` |
-| Go 已触发重启，connector 在结果落盘前退出 | 恢复时只读查询 `operationMarker`、原安装实例和容器启动记录，核对版本。保留原 `commandId` | 证据吻合时结算结果。无法判定时为 `UNCERTAIN`。继续核验仍不足时进入 `REVIEW_REQUIRED`，阻止自动再次重启 |
-| 取消操作与启动重启同时发生 | 控制面记录取消意图，执行器检查实际启动边界。若已发生重启，继续核验结果并记录副作用范围 | 有未启动且取消生效的证据时，显示 `CANCELLED`。若重启已完成且证据一致，显示 `SUCCEEDED` 和 `cancelIneffective` |
+| WSS 已发送，接收确认超时 | 同一 incarnation 重连时先持久化更高 epoch 并完成 ready 握手，再按原命令查询 journal。旧 epoch 的帧只结束该次投递，已运行的动作继续按原命令核对 | 进入 `RECONCILING` 并保留最后可信执行状态。已有投递历史时，只有取得未启动且已过期的证据才可记为 `EXPIRED` |
+| Compose 已被调用，connector 退出或安装状态刷新失败 | 保留执行阶段与原始错误，按原 `operationMarker` 只读补采原安装实例、容器集合和启动记录 | 证据能归因且满足重启条件时记为 `SUCCEEDED`。能证明本次操作失败时记为 `FAILED`。无法判断已发生的动作时记为 `UNCERTAIN`，继续只读核对 |
+| 取消与首次投递或重启完成竞争 | `QUEUED` 且无投递历史时，取消与 `beginDispatch` 争同一 revision。取消胜出即结束排队。投递胜出后，记录操作者和取消意图，进入 `CANCEL_REQUESTED`，按节点证据核对 | 确认未启动且取消生效为 `CANCELLED`、`sideEffectExtent=NONE`。若重启已完成则为 `SUCCEEDED`，置 `cancelIneffective=true` 并保留原取消意图。矛盾证据无法裁决时进入 `REVIEW_REQUIRED` |
 | 操作员的节点授权被撤销 | 重试提交和详情查询均重新校验当前权限。节点按已获知的撤销信息拒绝新启动。尚可信的节点身份可继续回传已执行任务的受限结果 | 已撤权的操作员看到访问被拒。仍有权限的审计人员能核对原任务、提交人和结果 |
 | 合并结果的回执丢失，或人工结论之后收到矛盾结果 | 重送同一事件。TenantData 比对事件标识、序号、摘要和当前结论，一致时回复已合并的 revision，矛盾时保留冲突证据 | 人工结论保留，冲突追加到审计。`CONFLICT` 属于事件处理结果，任务中心继续显示已裁决的命令状态 |
 
-`REVIEW_REQUIRED` 的人工处置需要处置权限、依据和审计记录。若决定重新执行，创建关联原任务的新命令，再核验目标与资源版本。[主方案 §7.2 断线后的任务对账](technical-plan.md#72-断线后的任务对账) · [命令状态与允许转移](command-state.json)
+原 Go 实现先调用 `compose.Restart`，成功后才调用 `syncAppInstallStatus`。后者在连接 Docker 或读取容器列表时仍可能返回错误。因此，状态刷新报错后应保留 Compose 的执行记录，按原命令核对现场。已知 journal 丢失的节点走身份恢复流程，换用新密钥和 incarnation，原命令保留待核对。[重启与状态同步调用顺序](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/service/app_install.go#L316-L321) · [容器状态读取错误](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/service/app_install.go#L1199-L1216)
+
+进入 `REVIEW_REQUIRED` 后，由具备处置权限的人员记录证据、时间和结论。仍缺证据时继续保留该状态。另行批准重新执行时，创建关联原任务的新命令并复核目标版本。[主方案 §7.2 断线后的任务对账](technical-plan.md#72-断线后的任务对账) · [命令状态与允许转移](command-state.json)
 
 # 4. 在 XC 还原用户看到的进度
 
@@ -137,7 +139,9 @@ sequenceDiagram
 | AC-CMD、NET-CMD | 重启原节点的 OpenResty 安装实例，查询到终态 | 一条命令对应一次 Compose 重启动作。原实例的预期容器启动时间改变，版本及运行状态符合预期，另一节点实例保持原状。D1 事件、journal 与现场证据可按同一命令串联 |
 | FI-CMD | 在 D1 提交后丢弃 HTTP 响应，以同 key 和原请求重发。另用同 key 更换服务名重发 | 第一次重试回放同一 `commandId`，第二次重试得到请求指纹冲突。核对收据与实际启动记录，均只对应一次原始操作 |
 | FI-CMD、AC-CMD | 在 Compose 已启动、结果尚未落盘时停止测试 connector，恢复后分别提供完整和缺失的容器证据 | 完整证据可还原实际结果。缺失证据进入未知或人工核对。两组都保留原 `commandId`，恢复后均无第二次启动记录 |
-| FI-CMD | 命令已受理、执行器尚未启动时，将同节点的别名改绑为另一个安装实例并更新资源版本 | 执行器在持锁复核时记录目标变更和未启动证据，原命令被拒，两实例均未重启。重试原 HTTP 请求仅回放原收据 |
+| FI-CMD | 丢弃首次受理响应。执行器尚未启动时，将别名改绑到同节点的另一实例。以原版本、请求体和 key 重试 | 回放原 `commandId`、期限与安装绑定。执行器持锁复核后记录目标变更和未启动证据，原命令进入 `REJECTED`，两个实例的重启次数均为零 |
+| FI-APP、FI-CMD | 用测试适配器让 Compose 完成一次重启，再让随后的容器状态查询返回错误。恢复读取，按原命令对账 | 仅触发一次 Compose 重启。保留状态查询错误，以操作标记、原容器集合和变化的启动时间核实后才记为 `SUCCEEDED`。另用无法归因的样本复测，任务保留 `UNCERTAIN` |
+| AC-CMD、FI-CMD | 两次独立运行分别让取消先于 `beginDispatch` 胜出、让重启先于取消生效但延后上报结果 | 第一组为 `CANCELLED`，无投递和重启记录。第二组保留取消记录。收到可核实的完成事件后为 `SUCCEEDED`、`cancelIneffective=true`，只有一次重启 |
 | AC-AUTH、FI-AUTH | 完成一次提交后撤销操作员对该节点的访问，重新打开详情并用原 key 重试 | 两次访问均被拒。授权审计人仍能核验原命令与执行结果，没有新增命令 |
 | AC-UI | 在原节点提交后切换到另一合法节点，延迟交付旧查询响应，再刷新原任务深链接 | 目标节点的同名服务保持自身数据，原任务在重新鉴权后可见，状态按 revision 单调更新 |
 | DEV02、NET-REG | 在注册事务提交后丢弃响应，用原请求标识、公钥和新挑战的签名恢复 | 返回原 `nodeId` 与 incarnation，节点绑定及成功消费审计各一份。随后以该身份完成连接与 `ready` 握手 |
@@ -173,7 +177,9 @@ flowchart LR
 
 Vue 首页的 `onLoadCurrentInfo` 调用 `loadCurrentInfo`，传入磁盘和网络选择器。agent 的仪表盘路由进入 `LoadDashboardCurrentInfo`，由 `DashboardService.LoadCurrentInfo` 产生 `DashboardCurrent`。网络收发字节、磁盘读写字节是累计值，Vue 以两次 `shotTime` 的时间差换算速率。主机信息读取失败时，服务可能仅返回带采样时间的结构，其余数值保留零值。[首页速率计算](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/frontend/src/views/home/index.vue#L1082-L1115) · [请求模块](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/frontend/src/api/modules/dashboard.ts#L32) · [agent 路由](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/router/ro_dashboard.go#L26) · [采样服务](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/service/dashboard.go#L188-L196)
 
-`node.inspect` 的目标适配需要在采集点传递有效字段及采样错误。仅凭返回结构里的 0，适配器无法区分采集失败和机器空闲。XC 将 `shotTime` 映射为 `sampledAt`，将连接的 `lastSeenAt` 单独展示。缓存键包含租户、节点、incarnation 和选择器。首次读取、更换网卡或磁盘、计数回退或时间不递增时，只建立新基线；下一份有效样本才显示速率。采集失败时可以显示上次成功值并标记 `stale`。
+`node.inspect` 适配器需从采集点取得每类指标的有效性。XC 按租户、节点、incarnation 和所选网卡或磁盘保存基线。首次有效采样、更换选择器、计数回退或时间不递增时，页面显示「等待下一次采样」。同一基线上的两份有效样本计数相等时，速率才是零。迟到的响应只能更新其所属节点和选择器。
+
+对采集成功的指标，用 `shotTime` 更新最后有效的 `sampledAt`。采集失败时保留该指标的原值与时间并标记 `stale`，从未成功则显示「暂无数据」。连接心跳单独更新 `lastSeenAt`。联调可回放相隔 2 秒的两个样本，发送字节增加 4096 B、磁盘读取增加 4 MiB 时，页面应分别显示 2 KiB/s 和 2 MiB/s。[原首页的时间差与单位换算](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/frontend/src/views/home/index.vue#L1082-L1126)
 
 ## 7.3 控制面意图如何映射到安装实例
 
@@ -189,7 +195,15 @@ Vue 首页的 `onLoadCurrentInfo` 调用 `loadCurrentInfo`，传入磁盘和网�
 
 前端 `backup()` 生成 UUID，把 `type`、站点别名 `detailName` 和 `taskID` 交给备份 API，随后用相同任务标识打开日志。agent 中的 `WebsiteBackup` 按别名解析站点，在 `agent.db` 创建带文件名和任务 ID 的 Waiting 记录。独立备份由 goroutine 执行，`Task.Execute` 向 `task.db` 保存任务并推进步骤，工作函数写出本地归档，调用方再更新备份记录。[前端提交](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/frontend/src/components/backup/index.vue#L339-L356) · [受理与记录创建](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/service/backup_website.go#L29-L59) · [异步执行](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/service/backup_website.go#L222-L246) · [任务持久化](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/task/task.go#L317-L360)
 
-恢复时分别查询业务记录、任务记录和归档清单。适用范围内处于 Executing 的本地任务在服务重启时可被标记为 Failed/Interrupted，归档有可能已经写完。当前基线还区分本地 PHP 与受管运行环境：本地 PHP 会跳过受管 runtime 目录的备份。核验清单据站点类型、runtime 来源及是否关联数据库确定预期组成。此流程说明备份**创建**；覆盖已有站点的恢复操作沿用独立的 `backup.restore` 契约。[中断处理](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/service/task.go#L126-L131) · [归档组成](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/service/backup_website.go#L280-L316)
+任务库和业务库分别写回。任务终态更新和独立备份成功回写的错误均未向上层返回。因此，即使没有进程中断，也可能看到任务为 Success、备份记录仍为 Waiting。部分 Executing 任务在重启后还会被记为 Failed/Interrupted。原版备份记录保存文件位置，缺少整文件摘要及长度。[任务状态写入](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/task/task.go#L291-L293) · [业务记录写回](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/service/backup_website.go#L238-L246) · [中断处理](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/service/task.go#L126-L131) · [备份记录字段](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/model/backup.go#L17-L35)
+
+目标适配在执行前固定 `commandId`、站点、`localTaskId` 和预期成员。对两个 runtime 验收样本，都应包含网站配置、站点数据和已关联数据库。本地 PHP 跳过受管 runtime 子包，受管样本应包含它。归档关闭后，节点需持久记录关联的 `backupRecordId`、文件位置、长度、SHA-256 及采集时间，供独立复算。以下判定用于备份创建。还原另走 `backup.restore`。[归档成员及写入顺序](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/service/backup_website.go#L261-L317)
+
+| 恢复后观察到的证据 | 对原命令的处理 |
+|---|---|
+| 业务记录 Waiting，任务 Success。原命令、任务、备份记录和文件一一对应，预期成员齐全，复算的长度与摘要均匹配归档关闭时的凭据 | 按原命令和当前 revision 合并本地完成结果，记录两库差异与依据。重复执行对账时复用同一结果 |
+| 文件存在，但缺少原命令绑定或关闭时的凭据，成员、长度或摘要冲突，或任务中断后尚无法归因 | 保留原记录并进入 `UNCERTAIN`，只读补证。事后对同一文件计算两次摘要仍无法证明它属于原命令 |
+| 本地归档已核实，R2 制品仍在上传或校验中 | 分别记录本地完成和云端进度。云端交付以原 `artifactId` 达到 `READY` 为准 |
 
 # 8. 云端与节点的实施契约
 
@@ -209,7 +223,7 @@ Vue 首页的 `onLoadCurrentInfo` 调用 `loadCurrentInfo`，传入磁盘和网�
 
 1. **固定输入。** P0 固定 Go 源码、XC 客户端版本和 operation 映射，记录测试节点的 1Panel、容器及适配器版本。先通过只读样本核对租户隔离、时间单位和错误表达，再开放写入。
 2. **接入一次重启。** 用可追踪的测试实例复核成功路径，在启动已发生、回执未落盘的位置中断 connector。以本地操作标记和启动证据证明动作次数；无法归因时应保留未知状态。对应 AC-CMD、FI-CMD、AC-APP。
-3. **接入一次网站备份。** 分别取本地 PHP 和受管 runtime 站点。模拟归档已写完而业务记录尚未更新，恢复时核对原记录、任务及归档，确认没有产生第二份归档。对应 AC-FILE、FI-CMD、AC-APP。
+3. **接入一次网站备份。** 按 AC-APP 核对本地 PHP 和受管 runtime 样本的预期成员。卡在任务成功、业务记录写回前，恢复时按 AC-FILE 复算归档长度与摘要。按 FI-CMD 比较对账前后同一命令发起备份的次数，应无新增调用。原任务内部重试单列。还原能力另取隔离目标按 AC-RECOVERY 实测。
 4. **切换和回退。** 按节点与能力开启适配。回退时停止该能力的新命令，保留已受理任务的对账和撤权检查。将 journal、租户事件、资源版本和归档摘要归入同一次联调记录，容量验收沿用独立门禁。
 
 [工程实施与联调工作页](https://github.com/XCAngelWatch/AngelFleetPRD/blob/main/docs/spaces/implementation-review.md)列出各工作包的输入、断点与通过条件，供节点、控制面和前端工程师共同验收。

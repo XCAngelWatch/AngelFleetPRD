@@ -1,17 +1,26 @@
 # 1Panel 适配实施与联调
 
-主方案的迁移矩阵依据 `cedb8dd`。本轮逐项复核 `dev-v2@aaba86d` 的三个入口，下面的通过条件均待真机验证。准备两个隔离租户及其测试节点，记录节点身份代次、版本和操作者权限。每次运行分配一个 `runId`。[主方案基线](https://github.com/1Panel-dev/1Panel/commit/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633) · [本轮源码基线](https://github.com/1Panel-dev/1Panel/commit/aaba86d0ef71a31ee319e74998ffe83c64abf4b6)
+准备两个隔离租户和各自的 Linux 测试节点 A、B，为操作者授予测试所需的节点权限。每次试验分配一个 `runId`，记录节点身份代次、Go 与适配器版本、故障触发时点。主方案的迁移矩阵固定在 `cedb8dd`，本页三个入口已复核到 `aaba86d`。以下场景均待真机验证。[主方案基线](https://github.com/1Panel-dev/1Panel/commit/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633) · [本轮源码基线](https://github.com/1Panel-dev/1Panel/commit/aaba86d0ef71a31ee319e74998ffe83c64abf4b6)
 
 ## 工作包一 · 节点只读取样
 
-接通已注册节点的查询通道，用 `node.inspect` 读取 CPU、内存样本。节点侧复用 Dashboard 的只读采集方法，适配层补入采样时间和节点身份代次。先读节点 A，切到 B 后再交付 A 的延迟响应；随后断开 B 的连接。通过条件是 B 的详情只展示 B 的样本，缓存保留原采样时间并标记过期，有效的数值零和采集失败可以区分。保存两次请求、采样值和页面状态供 AC-HOST、AC-UI 核对。[采集入口](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/service/dashboard.go#L112)
+1. **准备样本。** 按详设 §7.2，从 `LoadCurrentInfo` 采集同一节点、网卡和磁盘的累计字节数及 `shotTime`。向测试客户端回放两份相隔 2 秒的有效样本，发送字节增加 4096 B，磁盘读取增加 4 MiB。预期分别为 2 KiB/s、2 MiB/s。计数保持不变的下一份有效样本应显示零速率。[采集入口](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/service/dashboard.go#L188-L196) · [速率计算](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/frontend/src/views/home/index.vue#L1082-L1126)
+2. **切换与断线。** 暂缓 A 的响应，切到 B 并取得 B 的有效样本后再交付 A 的响应。B 页面应仅显示 B 的数据。更换 B 的网卡后，首样本仅建立基线；再触发采集失败或断线，保留最后成功的 `sampledAt` 并显示 `stale`。保存选择器、原始计数、采样时刻和页面值，按 AC-HOST、AC-UI 核对。
 
 ## 工作包二 · OpenResty 实例重启
 
-准备受 1Panel 管理的测试实例，将 `website-proxy` 绑定到节点及安装 ID，记录容器身份和原启动时间。普通安装实例同步调用 Compose 重启。实施时须由适配器校验资源版本，先持久关联 `commandId` 与操作标记，再提交一次重启。分别在响应丢失、执行开始后 connector 重启两处测试。重连后只读核对原命令、操作标记、容器启动时间及健康检查，同一意图只触发一次重启。若只能确认实例当前健康，保留 `UNCERTAIN`。附上命令记录和前后两次观测，按 AC-CMD、FI-CMD 判定。[安装实例重启分支](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/service/app_install.go#L316)
+1. **记录原目标。** 将 `website-proxy` 绑定到测试节点的 OpenResty 安装实例，记录 `installId`、`resourceVersion`、各目标容器身份和 `StartedAt`。在测试适配器上记录操作标记与实际进入 Compose 重启分支的次数。[重启及状态刷新](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/service/app_install.go#L316-L321)
+2. **分别触发两个断点。** 云端已受理而 HTTP 响应丢失时，用原 key、原请求重试，应返回同一 `commandId`。另一次试验让 Compose 成功后安装状态刷新失败，恢复时只读核对原标记、容器集合、启动时间与现场状态。同一命令应只有一次实际重启调用。若只能证明实例当前健康，保留 `UNCERTAIN`。附命令、分支计数与前后快照，按 AC-CMD、FI-CMD 核对。
 
 ## 工作包三 · 网站备份与归档核验
 
-准备本地 PHP 与受管运行环境各一站点。记录站点别名及关联数据库，提交备份并保存本地任务 ID。相对旧基线，本版跳过本地 PHP 运行环境目录；按站点类型核对站点文件、配置、关联数据库和适用的运行环境子包。归档完成、备份状态写回之前中断一次，在原命令下比对 `agent.db` 的备份记录、`task.db` 的任务、归档长度及整文件 SHA-256。三方证据一致再确认成功，冲突时保留现场。此项验收覆盖备份产物；恢复能力须在隔离目标另行还原并验证业务。将清单、摘要和对账结论归入 AC-APP、FI-APP，恢复演练单列 AC-RECOVERY。[运行环境分支](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/service/backup_website.go#L282) · [分库位置](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/init/db/db.go#L11)
+1. **冻结预期清单。** 为本地 PHP 和受管 runtime 各准备一个站点。记录别名、runtime 来源、数据库关联及预期归档成员。两类站点都核对网站配置、站点数据和已关联数据库；本地 PHP 跳过受管 runtime 目录，受管样本须包含对应子包。以 AC-APP 判定站点组成。[归档组成](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/service/backup_website.go#L261-L316)
+2. **卡在两库写回之间。** 测试适配器在归档关闭时登记命令、任务、备份记录、文件位置、长度与整文件 SHA-256。在 `Task.Execute` 已成功、业务记录尚未更新时中断，预期可见任务 Success、备份记录 Waiting。恢复后按原 `commandId`、`localTaskId` 和 `backupRecordId` 查到该归档，对照步骤 1 的成员清单，按 AC-FILE 独立复算长度与摘要。另做一轮缺失关闭凭据的试验，预期保留原命令并进入 `UNCERTAIN`。按 FI-CMD 记录对账前后的 Go 备份入口调用次数，两轮均应无新增。原任务的子步骤重试另记。恢复能力另取隔离目标还原并按 AC-RECOVERY 验收。[异步写回与原任务重试配置](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/service/backup_website.go#L222-L246) · [本地任务终态](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/task/task.go#L317-L362)
 
-每个工作包提交脱敏证据，注明源码版本、触发时点、预期、实际结果和未决项。评审按同一 `runId` 回查事件与现场观测。[源码适配详设](https://xcangelwatch.github.io/AngelFleetPRD/technical-design.html#section-7)
+## 实测记录
+
+每个断点填写一行，用 `runId` 关联版本、命令和证据。重复副作用按同一命令首次发起后新增的 Compose 重启或 Go 备份入口调用计数。各容器的启动时间、归档文件数和任务内部重试分别留作佐证。只读场景填「不适用」。备份摘要注明采集方、时刻及文件。预期进入 `UNCERTAIN` 的场景，若实测保留原命令且新增调用为零，可以判通过。如缺少入口计数等验收证据，结论填「待核对」并列出缺项。[源码适配详设](https://xcangelwatch.github.io/AngelFleetPRD/technical-design.html#section-7)
+
+| runId／场景／验收项 | 触发时点与预期 | 实测值／业务状态 | 重复副作用次数 | 脱敏证据链接 | 评审结论 |
+|---|---|---|---|---|---|
+| 待填写 | 待填写 | 待测 | 待测 | 待附 | 待执行 |
