@@ -11,7 +11,8 @@
 ## 阅读与维护
 
 - [完整技术方案](docs/technical-plan.md) 是内容源文件。
-- [技术详细设计](docs/technical-design.md) 以服务重启为例说明端到端执行与故障对账，另附节点注册、终端撤权和文件校验的联调场景。
+- [技术详细设计](docs/technical-design.md) 从 1Panel 的前端、core 和 agent 源码追踪实际调用链，说明 XC 控制台与 Cloudflare 控制面如何读取节点数据、受理命令并核对执行结果。
+- [工程协作与实施评审](docs/spaces/implementation-review.md) 是协作页的 GitHub 版本，供开发与测试按工作包核对改造入口、验收条件和待补证据。
 - [文档目录](docs/README.md) 说明每个结果文件的职责、权威性和推荐阅读顺序。
 - [Cloudflare 平台约束快照](docs/platform-constraints.md) 集中记录官方限制、抓取日期和 P0 复核规则。
 - [威胁模型](docs/angelfleetprd-threat-model.md) 分开描述当前静态发布链和目标控制面的安全边界。

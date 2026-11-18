@@ -84,7 +84,7 @@ async function readDocument(markdown, file, label, description) {
 
 const [plan, design] = await Promise.all([
   readDocument('technical-plan.md', 'index.html', '技术方案', '1Panel v2 Cloudflare 控制面技术方案，涵盖 XC React、Go 功能迁移、节点协议与单租户 1 万节点验收基线。'),
-  readDocument('technical-design.md', 'technical-design.html', '技术详细设计', '以一次服务重启串联命令受理、节点执行与结果对账，附节点接入、终端撤权、文件校验和联调验收设计。')
+  readDocument('technical-design.md', 'technical-design.html', '技术详细设计', '对照 1Panel 前端、core 与 agent 的源码入口，说明节点采样、命令执行与结果对账的实现边界，附注册、终端、制品与故障恢复验收场景。')
 ]);
 const documents = [plan, design];
 const searchRecords = documents.flatMap(doc => doc.records);

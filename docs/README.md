@@ -5,7 +5,8 @@
 | 文件 | 用途 | 权威性 |
 |---|---|---|
 | `technical-plan.md` | 完整 15 章与 A–E 附录；设计决策、迁移范围和验收摘要 | 主文档 |
-| [technical-design.md](technical-design.md) | 服务重启端到端示例、节点注册、终端撤权、制品校验与联调场景 | 实施设计，协议及验收编号引用主文档与机器契约 |
+| [technical-design.md](technical-design.md) | 1Panel 固定提交的源码入口、节点采样、命令执行与结果对账、联调场景 | 源码事实链接到对应提交，目标契约与验收条件沿用主方案 |
+| [spaces/implementation-review.md](spaces/implementation-review.md) | 工程协作页的 GitHub 版本，按工作包整理实施边界与验收证据 | 开发与测试的评审工作页 |
 | `platform-constraints.md` | Cloudflare Workers、D1、DO、Queues、R2 的平台约束快照和官方来源 | 平台数字唯一集中来源 |
 | `angelfleetprd-threat-model.md` | 当前静态发布链与目标控制面的威胁模型 | 安全设计输入，非运行证明 |
 | `command-state.json` | 命令状态集合和 39 条允许转移 | 状态机唯一机器来源 |
@@ -32,3 +33,5 @@
 5. [迁移台账](operation-ledger.md) 与主方案附录 B：逐项处理 Go 入口和真实功能。
 6. [威胁模型](angelfleetprd-threat-model.md)：按攻击面和证据缺口安排安全验收。
 7. [机器契约](command-state.json) 与 [验收注册表](acceptance-ids.json)：在 CI 和实施工具中消费。
+
+开发联调时可直接从[技术详细设计](technical-design.md)定位源代码，再用[工程协作页](spaces/implementation-review.md)核对本次工作包及验收证据。
