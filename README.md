@@ -1,6 +1,6 @@
 # AngelFleet 项目文档
 
-AngelFleet 面向使用 1Panel 的 Linux 运维团队。首批计划在 AngelFleetConsole 中交付节点接入、CPU 与内存概览和访问审计。当前已验证 GA-01 契约与样例，双租户真机联调和单租户万节点容量测试待执行。
+AngelFleet 管理 Linux 设备，支持独立 Agent 和可选的 1Panel 适配器。ARM64 试点已通过网页 SSH、设备本机 PTY、容器终端、资产与只读合规、独立 sshd 配置回滚及签名升级演练。GA-01 契约样例已通过校验。两个隔离租户各接入一台 Ubuntu 24.04 amd64 真机的正式验收仍待执行，万节点容量测试属于后续阶段。
 
 | 文档 | 阅读目的 |
 |---|---|
