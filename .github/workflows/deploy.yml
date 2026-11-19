@@ -64,7 +64,7 @@ jobs:
           PAGE_URL: ${{ steps.deployment.outputs.page_url }}
         run: |
           set -euo pipefail
-          node -e "const m=require('./expected-site/build-manifest.json'); console.log(['index.html','technical-design.html','go-agent-interface-contract.html','build-manifest.json',...m.supportingDocs].join('\n'))" > "$RUNNER_TEMP/angelfleet-files"
+          node -e "const m=require('./expected-site/build-manifest.json'); const files=new Set(['build-manifest.json','sitemap.xml',...m.readingPages.flatMap(p=>[p.file,p.markdown]),...m.supportingDocs]); console.log([...files].join('\n'))" > "$RUNNER_TEMP/angelfleet-files"
           while IFS= read -r file; do
             for attempt in {1..12}; do
               if curl --fail --silent --show-error --max-time 15 "${PAGE_URL%/}/${file}?rev=${GITHUB_SHA}&attempt=${attempt}" -o "$RUNNER_TEMP/angelfleet-smoke" &&

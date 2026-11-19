@@ -26,17 +26,47 @@ md.renderer.rules.fence = (tokens,index,options,env,self) => {
   }
   return `<div class="code-block"><button class="copy-code" type="button" aria-label="复制此段代码">复制代码</button>${fence(tokens,index,options,env,self)}</div>`;
 };
-function headingId(title, usedIds) {
+function markdownAnchor(title) {
+  return title.toLowerCase().replace(/[^\p{L}\p{N}\s_-]/gu, '').replaceAll(' ', '-');
+}
+function headingId(title, usedIds, useTitle) {
   let id = title.match(/^([\d]+(?:\.[\d]+)*)[.\s]/)?.[1];
   if (id) id = `section-${id.replaceAll('.','-')}`;
   else if (/^附录 [A-E]/.test(title)) id = `appendix-${title.match(/^附录 ([A-E])/)[1].toLowerCase()}`;
   else if (/^[A-E]\.\d/.test(title)) id = `section-${title.match(/^([A-E](?:\.\d+)+)/)[1].toLowerCase().replaceAll('.','-')}`;
-  else id = `heading-${createHash('sha256').update(title).digest('hex').slice(0,10)}`;
+  else id = useTitle ? markdownAnchor(title) : `heading-${createHash('sha256').update(title).digest('hex').slice(0,10)}`;
   const base = id;
   let suffix = 2;
   while (usedIds.has(id)) id = `${base}-${suffix++}`;
   usedIds.add(id);
   return id;
+}
+function indexWorkItems(tokens, page) {
+  const records = [];
+  let task;
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i];
+    if (token.type === 'tr_close') task = undefined;
+    if (token.type === 'tr_open') {
+      // markdown-it emits tr_open, td_open, then the first cell's inline token.
+      const firstCell = tokens[i + 2];
+      const firstText = firstCell?.children?.[0];
+      const key = firstText?.content.match(/^GA-\d{2}(?=\s)/)?.[0];
+      if (!key || firstText.type !== 'text') continue;
+      const id = key.toLowerCase();
+      token.attrSet('id', id);
+      const link = new token.constructor('link_open', 'a', 1);
+      link.attrSet('href', '#' + id);
+      const keyText = new token.constructor('text', '', 0);
+      keyText.content = key;
+      firstText.content = firstText.content.slice(key.length);
+      firstCell.children.unshift(link, keyText, new token.constructor('link_close', 'a', -1));
+      task = {page, id, title:firstCell.content, text:''};
+      records.push(task);
+    }
+    if (task && token.type === 'inline') task.text += ' ' + token.content;
+  }
+  return records;
 }
 async function readDocument(markdown, file, label, description) {
   const source = await readFile(`docs/${markdown}`, 'utf8');
@@ -47,6 +77,7 @@ async function readDocument(markdown, file, label, description) {
   const usedIds = new Set();
   const sourceAnchors = new Map();
   const records = [{page: file, id: 'top', title, text: ''}];
+  const sectionTag = tokens.slice(3).some(token => token.type === 'heading_open' && token.tag === 'h1') ? 'h1' : 'h2';
   let group = intro;
 
   // Assign anchors, search records and chapter groups from the same token stream.
@@ -54,19 +85,18 @@ async function readDocument(markdown, file, label, description) {
     const token = tokens[i];
     if (token.type === 'heading_open') {
       const inline = tokens[i + 1];
-      const heading = {id: headingId(inline.content, usedIds), title: inline.content};
-      if (token.tag === 'h1') {
+      const heading = {id: headingId(inline.content, usedIds, sectionTag === 'h2'), title: inline.content};
+      if (token.tag === sectionTag) {
         group = {heading, tokens: []};
         sections.push(group);
       }
-      const level = Number(token.tag.slice(1)) + (group === intro ? 0 : 1);
+      const level = Number(token.tag.slice(1)) + (group !== intro && sectionTag === 'h1' ? 1 : 0);
       token.tag = tokens[i + 2].tag = `h${Math.min(level, 6)}`;
       token.attrSet('id', heading.id);
       const anchor = new token.constructor('html_inline', '', 0);
       anchor.content = `<a class="heading-link" href="#${heading.id}" aria-label="链接到 ${escape(heading.title)}">#</a>`;
       inline.children.push(anchor);
-      const sourceAnchor = heading.title.toLowerCase().replace(/[^\p{L}\p{N}\s_-]/gu, '').replaceAll(' ', '-');
-      sourceAnchors.set(sourceAnchor, heading.id);
+      sourceAnchors.set(markdownAnchor(heading.title), heading.id);
       records.push({page: file, ...heading, text: ''});
       group.tokens.push(token, inline, tokens[i + 2]);
       i += 2;
@@ -79,6 +109,7 @@ async function readDocument(markdown, file, label, description) {
       records.at(-1).text += ' ' + token.content;
     }
   }
+  if (markdown === 'go-agent-development-plan.md') records.push(...indexWorkItems(tokens, file));
   for (const record of records) record.text = record.text.replace(/\s+/g, ' ').trim() || record.title;
   return {markdown, file, label, description, title, source, sourceAnchors, sections, intro, records, diagrams: 0};
 }
@@ -86,7 +117,10 @@ async function readDocument(markdown, file, label, description) {
 const documents = await Promise.all([
   readDocument('technical-plan.md', 'index.html', '技术方案', '1Panel v2 Cloudflare 控制面技术方案，涵盖 XC React、Go 功能迁移、节点协议与单租户 1 万节点验收基线。'),
   readDocument('technical-design.md', 'technical-design.html', '技术详细设计', '对照 1Panel 前端、core 与 agent 的源码入口，说明节点采样、命令执行与结果对账的实现边界，附注册、终端、制品与故障恢复验收场景。'),
-  readDocument('go-agent-interface-contract.md', 'go-agent-interface-contract.html', '节点契约', 'GA-01 确定 Go Agent 的源码仓库与模块目录，并给出节点注册、建立连接及首次可信采样的 HTTP 与 WSS 联调示例。')
+  readDocument('go-agent-interface-contract.md', 'go-agent-interface-contract.html', '节点契约', 'GA-01 确定 Go Agent 的源码仓库与模块目录，并给出节点注册、建立连接及首次可信采样的 HTTP 与 WSS 联调示例。'),
+  readDocument('go-agent-development-plan.md', 'go-agent-development-plan.html', '研发计划', 'Go Agent 接入的阶段目标、负责人、依赖、工作量和验收条件，覆盖 GA-01 至 GA-19。'),
+  readDocument('operation-ledger.md', 'operation-ledger.html', 'Go 操作台账', '查阅节点操作对应的 1Panel 源码、适配范围、互斥与结果核验方式。'),
+  readDocument('spaces/implementation-review.md', 'implementation-review.html', '联调验收记录', '按工作包核对节点注册与采样、OpenResty 重启、网站备份及恢复的真机联调场景与实测记录。')
 ]);
 const [plan, design, contract] = documents;
 const sampleFile = 'examples/go-agent-first-sample.json';
@@ -96,12 +130,23 @@ const searchRecords = documents.flatMap(doc => doc.records.map(record => ({...re
 // Keep repository links usable in Markdown and resolve them to the reading pages in HTML.
 md.renderer.rules.link_open = (tokens, index, options, env, self) => {
   const token = tokens[index];
-  const [path, fragment] = token.attrGet('href').split('#');
-  const target = documents.find(doc => doc.markdown === path);
+  const href = token.attrGet('href');
+  const url = new URL(href, site + env.markdown);
+  const repoDocs = repo + '/blob/main/docs/';
+  const isRepositoryLink = url.href.startsWith(repoDocs);
+  if (!isRepositoryLink && !url.href.startsWith(site)) return self.renderToken(tokens, index, options);
+  // HTML pages live at the site root; Markdown downloads retain their source directories.
+  const prefix = isRepositoryLink ? repoDocs : site;
+  const path = decodeURIComponent(url.pathname.slice(new URL(prefix).pathname.length));
+  const target = documents.find(doc => doc.markdown === path || doc.file === (path || 'index.html'));
   if (target) {
-    const id = fragment && target.sourceAnchors.get(decodeURIComponent(fragment));
-    if (fragment && !id) throw new Error(`Unknown source heading in ${path}#${fragment}`);
-    token.attrSet('href', target.file + (id ? '#' + id : ''));
+    const fragment = decodeURIComponent(url.hash.slice(1));
+    const id = target.sourceAnchors.get(fragment) ?? fragment;
+    if (id && !target.records.some(record => record.id === id)) throw new Error(`Unknown heading in ${env.markdown}: ${href}`);
+    const file = href.startsWith('#') && target === env ? '' : target.file;
+    token.attrSet('href', file + url.search + (id ? '#' + id : ''));
+  } else if (!isRepositoryLink) {
+    token.attrSet('href', url.pathname.slice(new URL(site).pathname.length) + url.search + url.hash);
   }
   if (path === sampleFile) token.attrSet('download', 'go-agent-first-sample.json');
   return self.renderToken(tokens, index, options);
@@ -114,7 +159,9 @@ function renderGroup(group, doc) {
 }
 
 function chapterLink({heading}) {
-  const [, number, label] = heading.title.match(/^附录 ([A-E]) · (.+)$/) || heading.title.match(/^(\d+)\. (.+)$/);
+  const parts = heading.title.match(/^附录 ([A-E]) · (.+)$/) || heading.title.match(/^(\d+)\. (.+)$/);
+  if (!parts) return `<a href="#${heading.id}">${escape(heading.title)}</a>`;
+  const [, number, label] = parts;
   return `<a href="#${heading.id}"><span class="section-number">${number}</span><span>${escape(label)}</span></a>`;
 }
 const searchIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></svg>';
@@ -169,18 +216,15 @@ await rm('dist',{recursive:true,force:true});
 await mkdir('dist/assets',{recursive:true});
 for (const doc of documents) {
   await writeFile(`dist/${doc.file}`, renderPage(doc));
-  await copyFile(`docs/${doc.markdown}`, `dist/${doc.markdown}`);
 }
 await writeFile('dist/.nojekyll','');
 await copyFile('src/site.css','dist/assets/site.css');
-await copyFile('docs/operation-ledger.md','dist/operation-ledger.md');
-for (const document of supportingDocs) {
+const downloads = new Set([...documents.map(doc => doc.markdown), ...supportingDocs, 'command-state.json', 'acceptance-ids.json']);
+for (const document of downloads) {
   const destination = `dist/${document}`;
   await mkdir(dirname(destination), {recursive:true});
   await copyFile(`docs/${document}`, destination);
 }
-await copyFile('docs/command-state.json','dist/command-state.json');
-await copyFile('docs/acceptance-ids.json','dist/acceptance-ids.json');
 await writeFile('dist/assets/favicon.svg','<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="6" fill="#143b40"/><path d="M6 24 16 6l10 18H6Z" fill="none" stroke="#e7f4f4" stroke-width="2"/><path d="M11 18h10M16 18v9" stroke="#e7f4f4" stroke-width="2"/></svg>');
 await writeFile('dist/assets/og-card.svg',`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630"><rect width="1200" height="630" fill="#143b40"/><path d="M110 465 300 135l190 330H110Z" fill="none" stroke="#e7f4f4" stroke-width="18"/><path d="M205 370h190M300 370v110" stroke="#e7f4f4" stroke-width="18" stroke-linecap="round"/><text x="560" y="285" fill="#f4ffff" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','Microsoft YaHei',sans-serif" font-size="64" font-weight="700">AngelFleet PRD</text><text x="560" y="370" fill="#b9d8da" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','Microsoft YaHei',sans-serif" font-size="34">1Panel v2 Cloudflare 控制面 · v${escape(siteMeta.version)}</text><text x="560" y="430" fill="#b9d8da" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','Microsoft YaHei',sans-serif" font-size="24">公开技术方案与分阶段验收基线</text></svg>`);
 await writeFile('dist/robots.txt',`User-agent: *\nAllow: /\nSitemap: ${site}sitemap.xml\n`);
@@ -221,6 +265,7 @@ const manifest = {
   searchRecords: searchRecords.length,
   acceptanceIds: Object.keys(acceptanceIds.ids).length,
   supportingDocs,
+  readingPages: documents.map(doc => ({file:doc.file, markdown:doc.markdown, label:doc.label, ...documentStats(doc)})),
   technicalDesign: documentStats(design),
   goAgentContract: documentStats(contract)
 };

@@ -1,4 +1,4 @@
-# 1Panel 适配实施与联调
+# 1Panel 适配与联调验收记录
 
 三个工作包均待真机验证。2026-11-19 复核了 1Panel `aaba86d` 的节点执行入口和 AngelFleetConsole `df715b3` 的 API 路由与测试脚本。主方案迁移矩阵基线为 `cedb8dd`。准备两个隔离租户及各自的 Linux 测试节点 A、B，为每个租户配置仅能访问本租户节点的测试账户。执行前填入本次部署的版本；每条结果附实测值与脱敏证据。[主方案基线](https://github.com/1Panel-dev/1Panel/commit/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633) · [本轮 1Panel 源码基线](https://github.com/1Panel-dev/1Panel/commit/aaba86d0ef71a31ee319e74998ffe83c64abf4b6) · [任务与依赖](../go-agent-development-plan.md)
 
@@ -26,17 +26,17 @@ P1 的节点页面和权限、P2 的注册、连接及 `node.inspect` 完成后�
 | 网卡与磁盘速率 | `/current/:ioOption/:netOption` → `DashboardCurrent` | 记录磁盘和网卡选择器，用 `ioReadBytes`、`netBytesSent` 的累计差和两次有效 `shotTime` 换算速率。[累计字段与采样时刻](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/dto/dashboard.go#L132-L150) |
 
 1. **回放有效样本。** 从 `LoadCurrentInfo` 取得同一节点、网卡和磁盘的样本。令两次有效采样相隔 2 秒，发送增加 4096 B、磁盘读取增加 4 MiB，再回放一次计数不变的有效样本。分别记录增长时的换算值和空闲时的零速率。[采集入口](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/service/dashboard.go#L188-L196) · [速率计算](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/frontend/src/views/home/index.vue#L1082-L1126)
-2. **切换目标并观察失败。** 暂缓 A 的响应，待 B 返回后再交付 A；另在 B 上更换网卡。分别触发指标采集错误和连接中断，保存原始计数、有效性、最后成功的 `sampledAt` 和页面值。[采样与缓存判据](https://xcangelwatch.github.io/AngelFleetPRD/technical-design.html#section-7-2)
+2. **切换目标并观察失败。** 暂缓 A 的响应，待 B 返回后再交付 A；另在 B 上更换网卡。分别触发指标采集错误和连接中断，保存原始计数、有效性、最后成功的 `sampledAt` 和页面值。[采样与缓存判据](../technical-design.md#72-节点采样怎样进入-xc-仪表盘)
 
 ## 工作包二 · OpenResty 实例重启
 
 1. **记录原目标。** 将 `website-proxy` 绑定到测试节点的 OpenResty 安装实例，记录 `installId`、`resourceVersion`、目标容器身份和 `StartedAt`。在测试适配器上保留操作标记，并对实际进入 Compose 重启分支的次数计数。[重启及状态刷新](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/service/app_install.go#L316-L321)
-2. **分别中断受理和刷新。** 在控制面持久受理后丢弃 HTTP 响应，以原 key 和原请求重发。另取一条命令，使 Compose 完成重启后安装状态刷新报错，保留原始错误。分别用能归因的容器快照和只可证明当前健康的样本复测，恢复时只读核对。[详设故障场景](https://xcangelwatch.github.io/AngelFleetPRD/technical-design.html#section-6)
+2. **分别中断受理和刷新。** 在控制面持久受理后丢弃 HTTP 响应，以原 key 和原请求重发。另取一条命令，使 Compose 完成重启后安装状态刷新报错，保留原始错误。分别用能归因的容器快照和只可证明当前健康的样本复测，恢复时只读核对。[详设故障场景](../technical-design.md#6-联调场景与交付证据)
 3. **丢失节点结果。** 让实际重启完成、节点 journal 持久保存结果后，中断本次结果投递。恢复连接后按原命令核对节点记录，补送结果，核对最终状态、相同事件的合并记录及实际重启次数。分别记录执行结果投递和云端 HTTP 受理的故障时点。
 
 ## 工作包三 · 网站备份与归档核验
 
-备份**创建**的云端 operation 名和授权权限待确定。当前可用测试适配器和测试命令标识验证 Go 创建入口、两库记录、本地归档及对账逻辑，报告中注明「节点适配器」。云端端到端验收待创建操作与权限确定后再执行。`backup.restore` 是另行登记的还原操作，须在隔离目标上按 AC-RECOVERY 验收。[Go 操作台账](https://xcangelwatch.github.io/AngelFleetPRD/operation-ledger.md) · [源码适配详设](https://xcangelwatch.github.io/AngelFleetPRD/technical-design.html#section-7-4)
+备份**创建**的云端 operation 名和授权权限待确定。当前可用测试适配器和测试命令标识验证 Go 创建入口、两库记录、本地归档及对账逻辑，报告中注明「节点适配器」。云端端到端验收待创建操作与权限确定后再执行。`backup.restore` 是另行登记的还原操作，须在隔离目标上按 AC-RECOVERY 验收。[Go 操作台账](../operation-ledger.md) · [源码适配详设](../technical-design.md#74-网站备份如何留下三份证据)
 
 1. **冻结预期清单。** 各选一个本地 PHP 和受管 runtime 站点，记录站点别名、runtime 来源、数据库关联及预期归档成员。均核对网站配置、站点数据以及已关联数据库，按各自的 runtime 来源判定子包。[归档组成](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/service/backup_website.go#L261-L316)
 2. **卡在两库写回之间。** 在归档关闭时登记 `commandId`、`localTaskId`、`backupRecordId`、文件位置、长度、整文件 SHA-256、采集方及时间。在 `Task.Execute` 成功后、业务记录写回前中断。恢复后快照应显示任务 Success、备份记录 Waiting。用原关联核对成员，独立复算长度和摘要，再用一组故意移除关闭凭据的样本复测。两组分别保留对账前后 Go 备份入口计数。原任务子步骤的重试单列。[异步写回及内部重试配置](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/service/backup_website.go#L222-L246) · [本地任务写回](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/task/task.go#L317-L362)
@@ -44,7 +44,7 @@ P1 的节点页面和权限、P2 的注册、连接及 `node.inspect` 完成后�
 
 ## 实测记录
 
-**每次运行填一次。** `runId`〔待填〕，租户／节点／incarnation〔待填〕，Go／适配器／XC 版本〔待填〕，验证层级〔待填〕。有请求链路时填 `traceId`，有命令时填 `commandId`，发生云端投递时填实际路径（直连或 outbox 补偿）。只读或本地试验可将不适用的字段标为「不适用」。复制本次运行对应的行，记下触发时刻和实测值，并附脱敏证据。[详设验收与证据](https://xcangelwatch.github.io/AngelFleetPRD/technical-design.html#section-6)
+**每次运行填一次。** `runId`〔待填〕，租户／节点／incarnation〔待填〕，Go／适配器／XC 版本〔待填〕，验证层级〔待填〕。有请求链路时填 `traceId`，有命令时填 `commandId`，发生云端投递时填实际路径（直连或 outbox 补偿）。只读或本地试验可将不适用的字段标为「不适用」。复制本次运行对应的行，记下触发时刻和实测值，并附脱敏证据。[详设验收与证据](../technical-design.md#6-联调场景与交付证据)
 
 **如何判定。** 预期 `UNCERTAIN` 的一行须同时看到原 `commandId`、实测命令状态 `UNCERTAIN` 和对账前后业务入口新增调用为 0。实测仍为 `RUNNING` 时，该次观察未达到预期。故意移除的关闭凭据应记录为故障输入。若测试人员漏采状态或入口计数，结论填「待核对」并列出缺项。调用次数按同一命令进入 Compose 重启或 Go 备份入口计数，容器数和归档数只作佐证。
 

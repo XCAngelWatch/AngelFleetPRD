@@ -2,12 +2,6 @@ import { readFile, stat } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import assert from 'node:assert/strict';
 
-const source = await readFile('docs/technical-plan.md','utf8');
-const html = await readFile('dist/index.html','utf8');
-const designSource = await readFile('docs/technical-design.md','utf8');
-const designHtml = await readFile('dist/technical-design.html','utf8');
-const contractSource = await readFile('docs/go-agent-interface-contract.md','utf8');
-const contractHtml = await readFile('dist/go-agent-interface-contract.html','utf8');
 const manifest = JSON.parse(await readFile('dist/build-manifest.json','utf8'));
 const siteMeta = JSON.parse(await readFile('docs/site-meta.json','utf8'));
 const stateDefinition = JSON.parse(await readFile('docs/command-state.json','utf8'));
@@ -16,14 +10,30 @@ const acceptanceRegistry = JSON.parse(await readFile('docs/acceptance-ids.json',
 const builtAcceptanceRegistry = JSON.parse(await readFile('dist/acceptance-ids.json','utf8'));
 const sampleFile = 'examples/go-agent-first-sample.json';
 const supportingDocs = ['platform-constraints.md','angelfleetprd-threat-model.md','go-agent-development-plan.md','spaces/implementation-review.md',sampleFile];
-const engineeringDocs = await Promise.all(['go-agent-development-plan.md','spaces/implementation-review.md'].map(file => readFile(`docs/${file}`,'utf8')));
-const markdownSources = [source,designSource,contractSource,...engineeringDocs].join('\n\n');
 const site = 'https://xcangelwatch.github.io/AngelFleetPRD/';
-const pages = [
-  {file:'index.html', html, download:'technical-plan.md', canonical:site},
-  {file:'technical-design.html', html:designHtml, download:'technical-design.md', canonical:site+'technical-design.html'},
-  {file:'go-agent-interface-contract.html', html:contractHtml, download:'go-agent-interface-contract.md', canonical:site+'go-agent-interface-contract.html'}
-];
+const expectedDownloads = {
+  'index.html': 'technical-plan.md',
+  'technical-design.html': 'technical-design.md',
+  'go-agent-interface-contract.html': 'go-agent-interface-contract.md',
+  'go-agent-development-plan.html': 'go-agent-development-plan.md',
+  'operation-ledger.html': 'operation-ledger.md',
+  'implementation-review.html': 'spaces/implementation-review.md'
+};
+assert.deepEqual(manifest.readingPages.map(page => page.file).sort(), Object.keys(expectedDownloads).sort(), 'Unexpected publication routes');
+const pages = await Promise.all(manifest.readingPages.map(async stats => {
+  const {file, markdown: download} = stats;
+  assert.equal(download, expectedDownloads[file], `Wrong source in manifest for ${file}`);
+  const [source,html,downloaded] = await Promise.all([
+    readFile(`docs/${download}`, 'utf8'), readFile(`dist/${file}`, 'utf8'), readFile(`dist/${download}`, 'utf8')
+  ]);
+  assert.equal(downloaded,source,`Download must match repository source for ${file}`);
+  assert.equal(stats.sourceSha256,createHash('sha256').update(source).digest('hex'),`Outdated build of ${file}`);
+  return {file, download, source, html, stats, canonical: file === 'index.html' ? site : site + file};
+}));
+const byFile = new Map(pages.map(page => [page.file, page]));
+const {source,html} = byFile.get('index.html');
+const contractHtml = byFile.get('go-agent-interface-contract.html').html;
+const markdownSources = pages.map(page => page.source).join('\n\n');
 function readSearchData(document) {
   return JSON.parse(document.match(/<script id="search-data" type="application\/json">([\s\S]*?)<\/script>/)?.[1] ?? 'null');
 }
@@ -35,21 +45,20 @@ assert.equal(manifest.chapters.length,bodyChapterCount + appendixCount,'Manifest
 assert.equal(manifest.bodyChapters,bodyChapterCount,'Manifest body chapter count must follow source headings');
 assert.equal(manifest.appendices,appendixCount,'Manifest appendix count must follow source headings');
 assert.equal(manifest.sourceSha256,createHash('sha256').update(source).digest('hex'),'Build does not match current source');
-const otherDocuments = [
-  {file:'technical-design.html',source:designSource,stats:manifest.technicalDesign},
-  {file:'go-agent-interface-contract.html',source:contractSource,stats:manifest.goAgentContract}
-];
-for (const document of otherDocuments) {
-  const chapters = [...document.source.matchAll(/^# (\d+\..+)$/gm)].map(match => match[1]);
-  assert(chapters.length > 0,`Missing chapters in ${document.file}`);
-  assert.deepEqual(document.stats.chapters.map(chapter => chapter.title),chapters,`Chapter mismatch in ${document.file}`);
-  assert.equal(document.stats.sourceSha256,createHash('sha256').update(document.source).digest('hex'),`Outdated build of ${document.file}`);
-  assert.equal(document.stats.diagrams,(document.source.match(/^```mermaid$/gm) || []).length,`Diagram count mismatch in ${document.file}`);
+for (const page of pages) {
+  const chapterPattern = ['index.html','technical-design.html','go-agent-interface-contract.html'].includes(page.file)
+    ? /^# (\d+\..+|附录 [A-E] · .+)$/gm : /^## (.+)$/gm;
+  const chapters = [...page.source.matchAll(chapterPattern)].map(match => match[1]);
+  assert(chapters.length > 0,`Missing chapters in ${page.file}`);
+  assert.deepEqual(page.stats.chapters.map(chapter => chapter.title),chapters,`Chapter mismatch in ${page.file}`);
+  assert.equal(page.stats.diagrams,(page.source.match(/^```mermaid$/gm) || []).length,`Diagram count mismatch in ${page.file}`);
 }
-assert.equal(await readFile('dist/technical-plan.md','utf8'),source,'Download must match repository source');
-assert.equal(await readFile('dist/technical-design.md','utf8'),designSource,'Detailed design download must match repository source');
-assert.equal(await readFile('dist/go-agent-interface-contract.md','utf8'),contractSource,'Go Agent contract download must match repository source');
-assert.equal(await readFile('dist/operation-ledger.md','utf8'),await readFile('docs/operation-ledger.md','utf8'),'Operation ledger download must match repository source');
+for (const [file, stats] of [['index.html',manifest],['technical-design.html',manifest.technicalDesign],['go-agent-interface-contract.html',manifest.goAgentContract]]) {
+  const published = byFile.get(file).stats;
+  assert.equal(stats.sourceSha256, published.sourceSha256, `Manifest source mismatch for ${file}`);
+  assert.deepEqual(stats.chapters, published.chapters, `Manifest chapters mismatch for ${file}`);
+  assert.equal(stats.diagrams, published.diagrams, `Manifest diagrams mismatch for ${file}`);
+}
 for (const document of supportingDocs) assert.equal(await readFile(`dist/${document}`,'utf8'),await readFile(`docs/${document}`,'utf8'),`${document} download must match repository source`);
 const sampleText = await readFile(`dist/${sampleFile}`, 'utf8');
 JSON.parse(sampleText);
@@ -74,7 +83,7 @@ for (const page of pages) {
   assert(page.html.includes(`rel="canonical" href="${page.canonical}"`),`Incorrect canonical URL for ${page.file}`);
   const linkedFiles = new Set();
   for (const [,ref] of page.html.matchAll(/\s(?:href|src)="([^"]+)"/g)) {
-    if (/^(https?:|mailto:)/.test(ref)) continue;
+    if (/^(https?:|mailto:)/.test(ref) && !ref.startsWith(site)) continue;
     const url = new URL(ref,site+page.file);
     assert(url.href.startsWith(site),`Link outside Pages deployment path in ${page.file}: ${ref}`);
     const target = decodeURIComponent(url.pathname.slice(new URL(site).pathname.length)) || 'index.html';
@@ -87,10 +96,35 @@ for (const page of pages) {
   for (const path of linkedFiles) await stat(`dist/${path}`);
   const anchors = page.html.match(/<a\b[^>]*>/g) ?? [];
   assert(anchors.some(link => link.includes(`href="${page.download}"`) && /\bdownload\b/.test(link)),`Missing Markdown download on ${page.file}`);
-  assert(searchData.some(record => record.page === page.file),`Search is missing ${page.file}`);
+  const pageRecords = searchData.filter(record => record.page === page.file);
+  assert(pageRecords.every(record => record.label === page.stats.label),`Search label mismatch in ${page.file}`);
+  const searchIds = new Set(pageRecords.map(record => record.id));
+  assert(searchIds.has('top'),`Search is missing ${page.file}`);
+  for (const chapter of page.stats.chapters) assert(searchIds.has(chapter.id),`Search is missing ${page.file}#${chapter.id}`);
 }
-for (const document of otherDocuments) {
-  for (const chapter of document.stats.chapters) assert(pageIds.get(document.file).has(chapter.id),`Missing chapter in ${document.file}: ${chapter.title}`);
+// Check links in the actual planning and acceptance text independently of the shared navigation.
+for (const [file, peers] of [
+  ['go-agent-development-plan.html', ['index.html','technical-design.html','operation-ledger.html','implementation-review.html']],
+  ['implementation-review.html', ['go-agent-development-plan.html']]
+]) {
+  const article = byFile.get(file).html.match(/<div class="intro">([\s\S]*?)<footer class="document-footer">/)?.[1];
+  assert(article,`Missing document body in ${file}`);
+  const destinations = new Set([...article.matchAll(/<a\b[^>]*\bhref="([^"]+)"/g)].map(([,href]) => {
+    const target = new URL(href, site + file);
+    return target.href.split('#')[0];
+  }));
+  for (const peer of peers) {
+    const linked = destinations.has(site + peer) || (peer === 'index.html' && destinations.has(site));
+    assert(linked,`Missing reading link in the text of ${file}: ${peer}`);
+  }
+}
+const development = byFile.get('go-agent-development-plan.html');
+const taskIds = [...development.source.matchAll(/^\| (GA-\d+) /gm)].map(match => match[1]);
+assert(taskIds.length > 0,'Expected assignable Go Agent tasks');
+for (const taskId of taskIds) {
+  const anchor = taskId.toLowerCase();
+  assert(pageIds.get(development.file).has(anchor),`Missing shareable task anchor: ${taskId}`);
+  assert(searchData.some(record => record.page === development.file && record.id === anchor),`Missing searchable task: ${taskId}`);
 }
 const pageContents = pages.map(page => page.html).join('\n');
 const publication = markdownSources + pageContents + sampleText;
@@ -145,7 +179,7 @@ for (const [table,fieldText] of Object.entries(logicalSchemaRows)) {
 }
 const registrySection = source.split('## C.2 operation registry 初始示例')[1]?.split('## C.3')[0] ?? '';
 const registryOperations = [...registrySection.matchAll(/^\| ([a-z][\w.]+) \|/gm)].map(([,operation]) => operation).filter(operation => operation !== 'operation').sort();
-const ledger = await readFile('docs/operation-ledger.md','utf8');
+const ledger = byFile.get('operation-ledger.html').source;
 const ledgerOperations = [...ledger.matchAll(/^\| `([a-z][\w.]+)` \|/gm)].map(([,operation]) => operation).sort();
 assert.deepEqual(ledgerOperations,registryOperations,'Operation ledger must match C.2 registry');
 const acceptanceIds = Object.keys(acceptanceRegistry.ids).sort();
@@ -164,5 +198,5 @@ assert(html.includes(`设计版本 ${manifest.version}`) && html.includes(manife
 assert(html.includes('property="og:image"') && html.includes('name="twitter:card"'));
 assert(html.includes('lang="zh-CN"'));
 assert(!/(?:href|src)="(?:http:\/\/(?:localhost|127\.0\.0\.1)|\/src\/)/.test(pageContents),'Preview-only resource URL was published');
-const totalChapters = otherDocuments.reduce((count, document) => count + document.stats.chapters.length, manifest.chapters.length);
+const totalChapters = pages.reduce((count,page) => count + page.stats.chapters.length, 0);
 console.log(`Verified ${pages.length} documents, ${totalChapters} chapters, ${searchData.length} search targets, local assets, public references and required scope.`);

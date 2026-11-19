@@ -1,37 +1,15 @@
 # Go Agent 接入研发计划
 
-**首个交付物**是在 AngelFleetConsole 选中一个已注册的 Linux 节点，看到能追溯到这台机器、这一次 Go 采集的 CPU 和内存读数。随后用一次 OpenResty 重启验证有副作用的命令，用一次网站备份及一次隔离恢复验证跨进程、跨数据库的长任务。首版保留 1Panel core/agent。2026-11-19 已完成 GA-01 契约冻结与样例验证（`VERIFIED`），GA-02 至 GA-19 为 `PLANNED`。[GA-01 仓库与接口契约](go-agent-interface-contract.md) · [联调样例 JSON](examples/go-agent-first-sample.json)
+**首个里程碑（M1）**是在 AngelFleetConsole 选中已注册的 Linux 节点，看到来自这台机器、这次 Go 采集的 CPU 和内存读数。断开连接后，页面仍应显示最后一次成功采样的时间。首版沿用 1Panel core/agent，随后依次验收 OpenResty 重启、网站备份和隔离恢复。
 
-## 源码基线与本次修订
+**当前可开工。** 截至 2026-11-19，GA-01 接口契约与样例已验证，GA-02 至 GA-19 待实施。测试准备双租户和两台 Linux 节点（GA-02），控制面开发注册与授权（GA-03），Go 团队开发节点身份与服务启动（GA-04），前端按契约样例开发节点概览（GA-09）。M1 剩余估算为 **22–38 人日**，每项任务的依赖和完成条件见派工单。[M1 派工单](#m1-派工单) · [后续派工单](#m1-之后的派工单) · [接口契约](go-agent-interface-contract.md) · [联调样例 JSON](examples/go-agent-first-sample.json)
 
-核对对象为三个本地仓库在开始编写本文时的 HEAD，三者的 Git 工作树当时均干净。PRD 提交列用于还原修订前的文档。执行团队接单时记录实际构建版本与本地补丁，并复核涉及的入口。
-
-| 仓库 | 分支与完整提交 | 本轮核对范围 |
-|---|---|---|
-| AngelFleetPRD | `main@f3394afeb37c89145c5b58017ed49d815902ce61` | 主方案 §13–15、附录 A/C/D，详细设计、操作台账及验收注册表 |
-| 1Panel | `dev-v2@aaba86d0ef71a31ee319e74998ffe83c64abf4b6` | 原全量矩阵固定在 `cedb8dd`。两版本相差 38 个提交，本次按启动、采样、普通 OpenResty 重启和网站备份/恢复重新核对 |
-| AngelFleetConsole | `main@df715b38d174b2bdad7a5ab58150c05ead6c5d36` | 管理页面、API 主路由、环境绑定、权限/审计及本地和 Mock 测试入口 |
-
-| 原文或已有认识 | 当前源码事实与证据 | 对计划的影响 |
-|---|---|---|
-| Console 可复用账号、权限和审计 | **AngelFleet 已有**。`routeRequest` 分派身份、机构、租户、用户、角色、权限和审计等路由。权限目录和服务端检查已有实现。[路由](https://github.com/XCAngelWatch/AngelFleetConsole/blob/df715b38d174b2bdad7a5ab58150c05ead6c5d36/cloudflare/api/src/router.ts) · [权限检查](https://github.com/XCAngelWatch/AngelFleetConsole/blob/df715b38d174b2bdad7a5ab58150c05ead6c5d36/cloudflare/api/src/lib/permissions.ts) | 在现有授权链上增加节点归属、操作权限和证据关联，保留原管理路由 |
-| 早期按 XCtechResource 估算了控制面、导出队列与存储复用 | **待开发**。现有 API 的 `Env` 声明 DB 和可选登录限流 KV，普通 `withCors` 会重建 Response。主路由尚无节点注册、WSS、命令或制品接口。[环境](https://github.com/XCAngelWatch/AngelFleetConsole/blob/df715b38d174b2bdad7a5ab58150c05ead6c5d36/cloudflare/api/src/env.ts) · [HTTP 包装](https://github.com/XCAngelWatch/AngelFleetConsole/blob/df715b38d174b2bdad7a5ab58150c05ead6c5d36/cloudflare/api/src/lib/http.ts) | 为租户数据服务、AgentConn、命令补偿和后续 R2 实施分别留出工时 |
-| 1Panel 已有 Go agent，可作为执行器 | **上游已有**。core、agent 各自通过 `cmd/server/main.go` 启动。主节点模式下 agent 监听本地 Unix socket，其他部署模式使用入站双向 TLS。[监听实现](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/server/server.go#L128-L177) | 新增独立 connector 主动建链。首批适配只映射登记的本机操作，先验证社区版主节点部署 |
-| 读取 dashboard 即可显示在线指标 | **上游已有采集，待补有效性**。两个 Dashboard 入口在上述区间无变更。部分采集错误会被忽略，时间戳或零值不足以判断采集成功。[DashboardService](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/service/dashboard.go#L112-L196) | Go 采集点提供每项的有效性与采样时刻，断线与有效零值分别验收 |
-| Go 能重启 OpenResty | **上游已有重启动作，待补任务关联**。区间内改动的是 `UpdateAppConfig`。普通实例的 `AppInstallService.Operate` 仍按安装 ID 调 Compose 后刷新状态，该分支未持久绑定云端命令。[Operate](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/service/app_install.go#L265-L321) | 给实际执行分支补标记和只读核验。回执丢失、状态刷新失败、同时改绑是三个测试输入 |
-| 网站归档与恢复可复用 | **上游已有分支，端到端待验证**。`aea4de1c7` 让本地 PHP 在创建及恢复时均跳过 runtime 子包，有关联的数据库仍按站点配置处理。`WebsiteRecover` 找到站点后对内部启动错误只记日志，正常路径异步执行。[变更](https://github.com/1Panel-dev/1Panel/commit/aea4de1c7) · [恢复与创建](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/service/backup_website.go#L64-L249) | 创建、恢复分开派工。创建需核对归档，恢复需核对目标数据和服务。上游创建回归仅作为单元证据 |
-
-上述三个场景的 AngelFleet 真机验收均待执行。[Go 操作与源码台账](operation-ledger.md) · [实测记录表](spaces/implementation-review.md)
-
-## 代码归属与接口
-
-| 实施位置 | 开发边界与交接内容 |
+| 工作时要回答的问题 | 对应文档 |
 |---|---|
-| **节点 connector，GA-01 已定址** | 产品下游仓 `XCAngelWatch/AngelFleetAgent` 基于 1Panel，`connector/` 为独立 Go 模块，`cmd/connector`、`internal/{identity,protocol,connection,journal,adapter}` 和 `packaging/systemd` 的职责见[仓库与联调契约](go-agent-interface-contract.md)。GA-04 落实产品仓和首个服务代码。 |
-| **1Panel 节点执行器，沿用原进程** | 保留 Go 服务初始化、数据库和业务规则。仅在 `agent/app/service/`、关联 DTO 或本地处理器内补采集有效性、命令与任务关联、业务执行标记以及现场核验入口。以可选字段或独立受控本机调用兼容原面板。connector 不直接写业务库。 |
-| **Console 管理面与云端控制协议** | 复用 `cloudflare/api/src/` 的认证、权限、审计与路由入口。GA-01 固定同源 `/v1/tenants/{tenantId}`、`/v1/agents/` 及既有管理路由 `/api/v1/`。GA-02 配置 TenantData、AgentConn 和隔离存储，GA-03 起对接实际服务。前端扩展 `src/lib/api/`、`src/lib/auth/permission-policy.ts`、`src/lib/navigation/dashboard-pages.ts` 和 `src/app/`。 |
-
-登记顺序为租户内 `POST /nodes`、`POST /enrollments`，设备再完成 `POST /v1/agents/enroll`、`POST /v1/agents/connect-ticket`、`GET /v1/agents/connect`。首个只读命令 `node.inspect` 沿租户内 `POST /nodes/{nodeId}/commands` 受理，凭 `commandId` 查结果。云端确认租户、节点、权限，connector 持久化代次和接收记录，适配器调用 Go，节点回传带身份和采样时间的结果，页面按原租户及节点读取。消息、状态、幂等和错误码以[主方案附录 A、C](technical-plan.md)及[机器状态定义](command-state.json)为准。
+| 为什么首版保留 Go core/agent，各阶段怎样交付？ | [主方案 · 迁移路线与任务级工作包](technical-plan.md#14-迁移路线与任务级工作包) |
+| 控制台受理命令、节点执行、云端确认结果，各自在何时落盘？ | [技术详细设计 · 按持久化边界推进任务](technical-design.md#2-按持久化边界推进任务) |
+| 哪个 Go 入口可以复用，哪些地方要增加执行标记或有效性字段？ | [Go 操作台账 · 源码核验记录](operation-ledger.md#源码核验记录) |
+| 真实 Linux 节点需要测哪些故障，测试人员应记录什么证据？ | [联调验收记录 · 实测记录表](spaces/implementation-review.md#实测记录) |
 
 ## 分阶段里程碑
 
@@ -80,6 +58,16 @@
 | GA-18 接入恢复权限与页面 · 控制面主责，前端协作 · 3–5 | GA-11，联调需 GA-17 | 将已登记的 `backup.restore` 接入 Console 权限目录、租户命令 API 和恢复页。校验 Admin 恢复权限、归档归属、目标版本和恢复窗口，节点复核资源锁。页面确认归档、目标和版本，提交后保留原任务链接 | 授权 Admin 可追踪原任务；仅有创建权限、跨租户、版本过期或不在恢复窗口时拒绝，Go 恢复入口调用均为 0。AC-AUTH、FI-AUTH、AC-RECOVERY |
 | GA-19 恢复联调与交接 · 测试 · 3–5 | GA-16、17、18 | 在同一隔离测试站点写入样本 A 并备份，再将站点文件和数据库样本改为 B。保持相关资源 ID 和类型，保存恢复前快照。经 Console 发起恢复，关联原任务、快照和 checkpoint | 正常恢复后文件、数据库及服务读取均为 A。中断后按水位核对已完成步骤，执行回滚的分支应恢复为 B。证据缺失保留原命令待核对，对账新增顶层恢复调用为 0。AC-RECOVERY、FI-RESTORE、FI-RECOVERY |
 
+## 代码归属与接口
+
+| 实施位置 | 开发边界与交接内容 |
+|---|---|
+| **节点 connector，GA-01 已定址** | 产品下游仓 `XCAngelWatch/AngelFleetAgent` 基于 1Panel，`connector/` 为独立 Go 模块，`cmd/connector`、`internal/{identity,protocol,connection,journal,adapter}` 和 `packaging/systemd` 的职责见[仓库与联调契约](go-agent-interface-contract.md)。GA-04 落实产品仓和首个服务代码。 |
+| **1Panel 节点执行器，沿用原进程** | 保留 Go 服务初始化、数据库和业务规则。仅在 `agent/app/service/`、关联 DTO 或本地处理器内补采集有效性、命令与任务关联、业务执行标记以及现场核验入口。以可选字段或独立受控本机调用兼容原面板。connector 不直接写业务库。 |
+| **Console 管理面与云端控制协议** | 复用 `cloudflare/api/src/` 的认证、权限、审计与路由入口。GA-01 固定同源 `/v1/tenants/{tenantId}`、`/v1/agents/` 及既有管理路由 `/api/v1/`。GA-02 配置 TenantData、AgentConn 和隔离存储，GA-03 起对接实际服务。前端扩展 `src/lib/api/`、`src/lib/auth/permission-policy.ts`、`src/lib/navigation/dashboard-pages.ts` 和 `src/app/`。 |
+
+登记顺序为租户内 `POST /nodes`、`POST /enrollments`，设备再完成 `POST /v1/agents/enroll`、`POST /v1/agents/connect-ticket`、`GET /v1/agents/connect`。首个只读命令 `node.inspect` 沿租户内 `POST /nodes/{nodeId}/commands` 受理，凭 `commandId` 查结果。云端确认租户、节点、权限，connector 持久化代次和接收记录，适配器调用 Go，节点回传带身份和采样时间的结果，页面按原租户及节点读取。消息、状态、幂等和错误码以[主方案附录 A、C](technical-plan.md)及[机器状态定义](command-state.json)为准。
+
 ## 验收证据与排期决策
 
 | 验证层 | 运行入口与所能证明的结果 |
@@ -95,3 +83,24 @@
 | 隔离环境域名、TenantData/AgentConn 资源绑定与测试租户 | 同源 `/v1/tenants/*`、`/v1/agents/*` 及既有 `/api/v1/*` 的分工已冻结，GA-02 将实际域名及 bindings 写入环境配置。GA-03 接入同源 Cookie/CSRF 与节点权限。 |
 | 支持的网站备份创建名称、权限、目标类型及是否包含云端对象 | 产品与控制面负责人在 GA-14 决定。节点归档和两库对账可先行；云端端到端与 R2 工时按所选范围复核。 |
 | 下游 Go 补丁的维护边界及恢复测试目标 | Go 与测试负责人在 GA-12、17 开始前确认修改点和可还原的隔离站点。真实执行分支若无法保留可查询标记，须重新估算，相关操作保持待验证。 |
+
+## 源码基线与本次修订
+
+核对对象为三个本地仓库在开始编写本文时的 HEAD，三者的 Git 工作树当时均干净。PRD 提交列用于还原修订前的文档。执行团队接单时记录实际构建版本与本地补丁，并复核涉及的入口。
+
+| 仓库 | 分支与完整提交 | 本轮核对范围 |
+|---|---|---|
+| AngelFleetPRD | `main@f3394afeb37c89145c5b58017ed49d815902ce61` | 主方案 §13–15、附录 A/C/D，详细设计、操作台账及验收注册表 |
+| 1Panel | `dev-v2@aaba86d0ef71a31ee319e74998ffe83c64abf4b6` | 原全量矩阵固定在 `cedb8dd`。两版本相差 38 个提交，本次按启动、采样、普通 OpenResty 重启和网站备份/恢复重新核对 |
+| AngelFleetConsole | `main@df715b38d174b2bdad7a5ab58150c05ead6c5d36` | 管理页面、API 主路由、环境绑定、权限/审计及本地和 Mock 测试入口 |
+
+| 原文或已有认识 | 当前源码事实与证据 | 对计划的影响 |
+|---|---|---|
+| Console 可复用账号、权限和审计 | **AngelFleet 已有**。`routeRequest` 分派身份、机构、租户、用户、角色、权限和审计等路由。权限目录和服务端检查已有实现。[路由](https://github.com/XCAngelWatch/AngelFleetConsole/blob/df715b38d174b2bdad7a5ab58150c05ead6c5d36/cloudflare/api/src/router.ts) · [权限检查](https://github.com/XCAngelWatch/AngelFleetConsole/blob/df715b38d174b2bdad7a5ab58150c05ead6c5d36/cloudflare/api/src/lib/permissions.ts) | 在现有授权链上增加节点归属、操作权限和证据关联，保留原管理路由 |
+| 早期按 XCtechResource 估算了控制面、导出队列与存储复用 | **待开发**。现有 API 的 `Env` 声明 DB 和可选登录限流 KV，普通 `withCors` 会重建 Response。主路由尚无节点注册、WSS、命令或制品接口。[环境](https://github.com/XCAngelWatch/AngelFleetConsole/blob/df715b38d174b2bdad7a5ab58150c05ead6c5d36/cloudflare/api/src/env.ts) · [HTTP 包装](https://github.com/XCAngelWatch/AngelFleetConsole/blob/df715b38d174b2bdad7a5ab58150c05ead6c5d36/cloudflare/api/src/lib/http.ts) | 为租户数据服务、AgentConn、命令补偿和后续 R2 实施分别留出工时 |
+| 1Panel 已有 Go agent，可作为执行器 | **上游已有**。core、agent 各自通过 `cmd/server/main.go` 启动。主节点模式下 agent 监听本地 Unix socket，其他部署模式使用入站双向 TLS。[监听实现](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/server/server.go#L128-L177) | 新增独立 connector 主动建链。首批适配只映射登记的本机操作，先验证社区版主节点部署 |
+| 读取 dashboard 即可显示在线指标 | **上游已有采集，待补有效性**。两个 Dashboard 入口在上述区间无变更。部分采集错误会被忽略，时间戳或零值不足以判断采集成功。[DashboardService](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/service/dashboard.go#L112-L196) | Go 采集点提供每项的有效性与采样时刻，断线与有效零值分别验收 |
+| Go 能重启 OpenResty | **上游已有重启动作，待补任务关联**。区间内改动的是 `UpdateAppConfig`。普通实例的 `AppInstallService.Operate` 仍按安装 ID 调 Compose 后刷新状态，该分支未持久绑定云端命令。[Operate](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/service/app_install.go#L265-L321) | 给实际执行分支补标记和只读核验。回执丢失、状态刷新失败、同时改绑是三个测试输入 |
+| 网站归档与恢复可复用 | **上游已有分支，端到端待验证**。`aea4de1c7` 让本地 PHP 在创建及恢复时均跳过 runtime 子包，有关联的数据库仍按站点配置处理。`WebsiteRecover` 找到站点后对内部启动错误只记日志，正常路径异步执行。[变更](https://github.com/1Panel-dev/1Panel/commit/aea4de1c7) · [恢复与创建](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/service/backup_website.go#L64-L249) | 创建、恢复分开派工。创建需核对归档，恢复需核对目标数据和服务。上游创建回归仅作为单元证据 |
+
+上述三个场景的 AngelFleet 真机验收均待执行。[Go 操作与源码台账](operation-ledger.md) · [实测记录表](spaces/implementation-review.md)

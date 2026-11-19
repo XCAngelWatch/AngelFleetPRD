@@ -2,29 +2,34 @@
 
 1Panel v2 Cloudflare 控制面技术方案与静态文档站。
 
-**在线阅读：[AngelFleet PRD](https://xcangelwatch.github.io/AngelFleetPRD/)**
+**团队分享入口：[Go Agent 研发计划](https://xcangelwatch.github.io/AngelFleetPRD/go-agent-development-plan.html)**。同事可以在这里查看首个里程碑、任务负责人、依赖关系、工作量和验收条件。
 
 设计版本为 **2.4**，内容覆盖主体章节及附录 A–E，包括 XC React 前端复用、原 Go core/agent 功能迁移、Cloudflare 控制面、可靠任务协议、产品与设备生命周期、单租户 1 万节点验收条件，以及独立选入的系统 OTA / Yocto 扩展。
 
 文档公开不代表平台功能、节点链路或容量验收已完成；协议参数和目标容量仍以文档中的阶段验收条件为准。
 
-## 阅读与维护
+## 在线阅读
 
-- [完整技术方案](docs/technical-plan.md) 是内容源文件。
-- [技术详细设计](docs/technical-design.md) 从 1Panel 的前端、core 和 agent 源码追踪实际调用链，说明 XC 控制台与 Cloudflare 控制面如何读取节点数据、受理命令并核对执行结果。
-- [Go Agent 研发计划](docs/go-agent-development-plan.md) 列出首批可派工任务、P0–P6 依赖和验收标准，首个里程碑是控制台展示真实 Linux 节点的首次可信采样。
-- [GA-01 节点接口契约](https://xcangelwatch.github.io/AngelFleetPRD/go-agent-interface-contract.html) 给出 Go 源码仓库和目录分工、节点注册、建连及首次采样的接口，附[可下载的联调样例](docs/examples/go-agent-first-sample.json)。
-- [工程协作与实施评审](docs/spaces/implementation-review.md) 供开发与测试逐项记录节点注册与采样、实例重启、网站备份与恢复的联调结果。
+| 要做的事 | 阅读页面 |
+|---|---|
+| 领取 GA 任务、核对依赖和排期 | [Go Agent 研发计划](https://xcangelwatch.github.io/AngelFleetPRD/go-agent-development-plan.html) |
+| 确认首版范围、架构决策和 P0–P6 路线 | [主方案](https://xcangelwatch.github.io/AngelFleetPRD/) |
+| 追踪控制台、云端与 1Panel 的实际调用边界 | [技术详细设计](https://xcangelwatch.github.io/AngelFleetPRD/technical-design.html) |
+| 联调节点注册、建连和首次采样 | [GA-01 节点接口契约](https://xcangelwatch.github.io/AngelFleetPRD/go-agent-interface-contract.html) |
+| 核对 Go 操作入口、适配改动和执行证据 | [Go 操作台账](https://xcangelwatch.github.io/AngelFleetPRD/operation-ledger.html) |
+| 查看测试场景、预期结果和待填的实测证据 | [联调验收记录](https://xcangelwatch.github.io/AngelFleetPRD/implementation-review.html) |
+
+## 维护入口
+
 - [文档目录](docs/README.md) 说明每个结果文件的职责、权威性和推荐阅读顺序。
 - [Cloudflare 平台约束快照](docs/platform-constraints.md) 集中记录官方限制、抓取日期和 P0 复核规则。
 - [威胁模型](docs/angelfleetprd-threat-model.md) 分开描述当前静态发布链和目标控制面的安全边界。
-- [Go 操作改造台账](docs/operation-ledger.md) 是 P0 起始清单，未标记为已完成。
 - [命令状态定义](docs/command-state.json) 是状态图与转移检查使用的机器可读基线。
 - [验收 ID 注册表](docs/acceptance-ids.json) 是 AC/FI/CAP/NET/DEV/P6 验收编号的唯一登记来源。
 - [站点元数据](docs/site-meta.json) 是站点版本、发布状态和构建元数据的唯一来源。
 - [在线文档站](https://xcangelwatch.github.io/AngelFleetPRD/) 支持章节导航、全文搜索、流程图、打印和 Markdown 下载。
 - 生成结果统一位于 `dist/`：源文档、机器契约、平台约束、威胁模型和 `build-manifest.json` 均由 `npm run build` 生成。
-- 主方案、技术详细设计与节点接口契约各有一个 Markdown 源文件，构建时生成阅读页面和全文搜索索引。
+- 六个阅读页面均由对应 Markdown 源文件构建，支持全文搜索、章节直达和原文下载。
 - 更新方案结论时，应同步更新代码复用输入、验收证据和机器契约；发布网页与实施验收分别核对。
 
 ## 本地构建
