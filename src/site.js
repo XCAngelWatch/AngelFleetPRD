@@ -75,6 +75,64 @@ updateLocation();
 document.querySelector('.back-top').addEventListener('click', () => { window.scrollTo({top:0,behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth'}); });
 document.querySelector('.print-button').addEventListener('click', event => { event.preventDefault(); window.print(); });
 
+function setupFeatureTree(tree) {
+  const tools = tree.querySelector('.feature-tools');
+  const filter = tools.querySelector('input');
+  const toggle = tools.querySelector('button');
+  const featureStatus = tree.querySelector('.feature-status');
+  const branches = [...tree.querySelectorAll('.feature-branch')];
+  const branchText = branches.map(branch => branch.textContent.toLowerCase());
+  let previousOpen;
+
+  const visibleBranches = () => branches.filter(branch => !branch.hidden);
+  function updateToggle() {
+    const visible = visibleBranches();
+    toggle.disabled = visible.length === 0;
+    toggle.textContent = visible.length && visible.every(branch => branch.open) ? '全部收起' : '全部展开';
+  }
+
+  function applyFilter() {
+    const terms = filter.value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    if (terms.length && !previousOpen) previousOpen = branches.map(branch => branch.open);
+    branches.forEach((branch, index) => {
+      branch.hidden = !terms.every(term => branchText[index].includes(term));
+      if (terms.length) branch.open = !branch.hidden;
+      else if (previousOpen) branch.open = previousOpen[index];
+    });
+    if (!terms.length) previousOpen = undefined;
+    const count = visibleBranches().length;
+    featureStatus.textContent = terms.length ? (count ? `找到 ${count} 个功能域` : '未找到功能，试试其他关键词。') : '';
+    updateToggle();
+  }
+
+  filter.addEventListener('input', applyFilter);
+  toggle.addEventListener('click', () => {
+    const visible = visibleBranches();
+    const open = visible.some(branch => !branch.open);
+    visible.forEach(branch => { branch.open = open; });
+    updateToggle();
+  });
+  branches.forEach(branch => branch.addEventListener('toggle', updateToggle));
+  function revealTarget() {
+    // :target uses the browser's fragment decoding for both encoded and plain links.
+    const target = tree.querySelector('.feature-branch summary:target');
+    if (!target) return;
+    const branch = target.parentElement;
+    if (branch.hidden) {
+      filter.value = '';
+      applyFilter();
+      target.scrollIntoView();
+    }
+    branch.open = true;
+  }
+  window.addEventListener('hashchange', revealTarget);
+  revealTarget();
+  tools.hidden = false;
+}
+
+const featureTree = document.querySelector('.feature-tree');
+if (featureTree) setupFeatureTree(featureTree);
+
 document.querySelectorAll('.copy-code').forEach(button => button.addEventListener('click', async () => {
   try {
     await navigator.clipboard.writeText(button.parentElement.querySelector('code').textContent);

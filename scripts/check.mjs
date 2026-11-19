@@ -13,6 +13,7 @@ const supportingDocs = ['platform-constraints.md','angelfleetprd-threat-model.md
 const site = 'https://xcangelwatch.github.io/AngelFleetPRD/';
 const expectedDownloads = {
   'product-prd.html': 'product-prd.md',
+  '1panel-feature-map.html': '1panel-feature-map.md',
   'index.html': 'technical-plan.md',
   'technical-design.html': 'technical-design.md',
   'go-agent-interface-contract.html': 'go-agent-interface-contract.md',
@@ -34,12 +35,19 @@ const pages = await Promise.all(manifest.readingPages.map(async stats => {
 const byFile = new Map(pages.map(page => [page.file, page]));
 const {source,html} = byFile.get('index.html');
 const contractHtml = byFile.get('go-agent-interface-contract.html').html;
+const featureMap = byFile.get('1panel-feature-map.html');
+const upstreamFeatures = featureMap.source.split('\n## 1Panel 上游功能\n')[1]?.split('\n## ')[0];
+const featureBranches = [...(upstreamFeatures ?? '').matchAll(/^### (.+)$/gm)].map(match => match[1]);
 const markdownSources = pages.map(page => page.source).join('\n\n');
 function readSearchData(document) {
   return JSON.parse(document.match(/<script id="search-data" type="application\/json">([\s\S]*?)<\/script>/)?.[1] ?? 'null');
 }
 const searchData = readSearchData(html);
 assert(Array.isArray(searchData),'Expected a site-wide search index');
+const featureTargets = new Map(searchData.filter(record => record.page === featureMap.file).map(record => [record.id, record.title]));
+const renderedBranches = [...featureMap.html.matchAll(/<details class="feature-branch"><summary id="([^"]+)">/g)].map(match => featureTargets.get(match[1]));
+assert(featureBranches.length > 0, 'Missing upstream feature branches');
+assert.deepEqual(renderedBranches, featureBranches, 'Each upstream feature branch must be a disclosure in source order');
 const bodyChapterCount = (source.match(/^# \d+\./gm) || []).length;
 const appendixCount = (source.match(/^# 附录 [A-E]/gm) || []).length;
 assert.equal(manifest.chapters.length,bodyChapterCount + appendixCount,'Manifest chapter count must follow source headings');
@@ -113,7 +121,8 @@ for (const page of pages) {
 // Check links in the actual planning and acceptance text independently of the shared navigation.
 for (const [file, peers] of [
   ['go-agent-development-plan.html', ['index.html','technical-design.html','operation-ledger.html','implementation-review.html']],
-  ['product-prd.html', ['index.html','go-agent-development-plan.html']],
+  ['product-prd.html', ['index.html','go-agent-development-plan.html','1panel-feature-map.html']],
+  ['1panel-feature-map.html', ['index.html','go-agent-development-plan.html']],
   ['implementation-review.html', ['go-agent-development-plan.html']]
 ]) {
   const article = byFile.get(file).html.match(/<div class="intro">([\s\S]*?)<footer class="document-footer">/)?.[1];

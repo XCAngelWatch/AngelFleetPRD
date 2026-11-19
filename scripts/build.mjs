@@ -143,6 +143,7 @@ async function readDocument(markdown, file, label, description) {
 
 const documents = await Promise.all([
   readDocument('product-prd.md', 'product-prd.html', '产品 PRD', 'AngelFleet 的用户旅程、1Panel 功能迁移范围、三批交付与试点验收。'),
+  readDocument('1panel-feature-map.md', '1panel-feature-map.html', '功能导图', '展开 1Panel 的 16 个功能域，查看 AngelFleet 迁移范围、阶段和验收入口。'),
   readDocument('technical-plan.md', 'index.html', '技术方案', '1Panel v2 Cloudflare 控制面技术方案，涵盖 XC React、Go 功能迁移、节点协议与单租户 1 万节点验收基线。'),
   readDocument('technical-design.md', 'technical-design.html', '技术详细设计', '对照 1Panel 前端、core 与 agent 的源码入口，说明节点采样、命令执行与结果对账的实现边界，附注册、终端、制品与故障恢复验收场景。'),
   readDocument('go-agent-interface-contract.md', 'go-agent-interface-contract.html', '节点契约', 'GA-01 确定 Go Agent 的源码仓库与模块目录，并给出节点注册、建立连接及首次可信采样的 HTTP 与 WSS 联调示例。'),
@@ -150,9 +151,9 @@ const documents = await Promise.all([
   readDocument('operation-ledger.md', 'operation-ledger.html', 'Go 操作台账', '查阅节点操作对应的 1Panel 源码、适配范围、互斥与结果核验方式。'),
   readDocument('spaces/implementation-review.md', 'implementation-review.html', '联调验收记录', '核对节点注册与逐指标采样的真机证据，区分当前联调工作和已移出的历史用例。')
 ]);
-const [product, plan, design, contract, development, ledger, review] = documents;
+const [product, featureMap, plan, design, contract, development, ledger, review] = documents;
 const navigationGroups = [
-  {label: '范围与排期', pages: [product, plan, development]},
+  {label: '范围与排期', pages: [product, featureMap, plan, development]},
   {label: '实现设计', pages: [design, contract]},
   {label: '操作与验收', pages: [ledger, review]}
 ];
@@ -186,6 +187,26 @@ md.renderer.rules.link_open = (tokens, index, options, env, self) => {
 };
 
 function renderGroup(group, doc) {
+  if (doc === featureMap && group.heading?.id === '1panel-上游功能') {
+    const branches = group.tokens.flatMap((token, index) => token.type === 'heading_open' && token.tag === 'h3' ? [index] : []);
+    const render = tokens => md.renderer.render(tokens, md.options, doc);
+    const details = branches.map((start, index) => {
+      const heading = group.tokens[start];
+      const title = group.tokens[start + 1].content;
+      const body = render(group.tokens.slice(start + 3, branches[index + 1]));
+      return `<details class="feature-branch"><summary id="${heading.attrGet('id')}">${escape(title)}</summary><div class="feature-branch-body">${body}</div></details>`;
+    }).join('\n');
+    return `${render(group.tokens.slice(0, branches[0]))}
+      <div class="feature-tree">
+        <div class="feature-tools" hidden>
+          <div class="feature-filter"><label for="feature-filter">查找上游功能</label><input type="search" id="feature-filter" placeholder="例如 Docker、MCP、快照"></div>
+          <button class="feature-toggle" type="button">全部展开</button>
+        </div>
+        <p class="feature-status" role="status"></p>
+        <div class="feature-root">1Panel v2 <span>${branches.length} 个功能域</span></div>
+        <div class="feature-branches">${details}</div>
+      </div>`;
+  }
   return md.renderer.render(group.tokens, md.options, doc)
     .replace(/<table(?: class="(gantt-table)")?>/g, (tag, gantt) => `<div class="table-scroll${gantt ? ' gantt-scroll' : ''}" role="region" aria-label="${gantt ? 'M1 甘特图，可横向滚动' : '可横向滚动的数据表'}" tabindex="0">${tag}`)
     .replace(/<\/table>/g, '</table></div>');
