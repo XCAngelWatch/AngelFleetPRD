@@ -69,6 +69,27 @@ function indexWorkItems(tokens, page) {
   }
   return records;
 }
+function formatGantt(tokens, start) {
+  tokens[start].attrSet('class', 'gantt-table');
+  let column = 0;
+  for (let i = start + 1; tokens[i].type !== 'table_close'; i++) {
+    if (tokens[i].type === 'tr_open') {
+      column = 0;
+      if (tokens[i + 2]?.content === '验收里程碑') tokens[i].attrSet('class', 'gantt-milestones');
+    }
+    if (tokens[i].type !== 'td_open') continue;
+    const week = column++;
+    if (!week) continue;
+    const range = tokens[i + 1].content.match(/^\*\*D(\d+)(?:–D(\d+))?\*\*$/);
+    if (!range) continue;
+    const first = Number(range[1]);
+    const last = Number(range[2] ?? range[1]);
+    const offset = first - (week - 1) * 5 - 1;
+    if (offset < 0 || last < first || last > week * 5) throw new Error(`Invalid schedule span in week ${week}: ${range[0]}`);
+    tokens[i].attrSet('class', 'gantt-workdays');
+    tokens[i].attrSet('style', `--offset:${offset * 20}%;--duration:${(last - first + 1) * 20}%`);
+  }
+}
 async function readDocument(markdown, file, label, description) {
   const source = await readFile(`docs/${markdown}`, 'utf8');
   const tokens = md.parse(source, {});
@@ -80,6 +101,7 @@ async function readDocument(markdown, file, label, description) {
   const records = [{page: file, id: 'top', title, text: ''}];
   const sectionTag = tokens.slice(3).some(token => token.type === 'heading_open' && token.tag === 'h1') ? 'h1' : 'h2';
   let group = intro;
+  let ganttPending = markdown === 'go-agent-development-plan.md';
 
   // Assign anchors, search records and chapter groups from the same token stream.
   for (let i = 3; i < tokens.length; i++) {
@@ -102,6 +124,10 @@ async function readDocument(markdown, file, label, description) {
       group.tokens.push(token, inline, tokens[i + 2]);
       i += 2;
       continue;
+    }
+    if (ganttPending && group.heading?.title === 'M1 排期与甘特图' && token.type === 'table_open') {
+      formatGantt(tokens, i);
+      ganttPending = false;
     }
     group.tokens.push(token);
     if (token.type === 'inline') {
@@ -161,7 +187,7 @@ md.renderer.rules.link_open = (tokens, index, options, env, self) => {
 
 function renderGroup(group, doc) {
   return md.renderer.render(group.tokens, md.options, doc)
-    .replace(/<table>/g, '<div class="table-scroll" role="region" aria-label="可横向滚动的数据表" tabindex="0"><table>')
+    .replace(/<table(?: class="(gantt-table)")?>/g, (tag, gantt) => `<div class="table-scroll${gantt ? ' gantt-scroll' : ''}" role="region" aria-label="${gantt ? 'M1 甘特图，可横向滚动' : '可横向滚动的数据表'}" tabindex="0">${tag}`)
     .replace(/<\/table>/g, '</table></div>');
 }
 

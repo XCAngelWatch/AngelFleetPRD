@@ -85,18 +85,95 @@ document.querySelectorAll('.copy-code').forEach(button => button.addEventListene
   setTimeout(() => { button.textContent = '复制代码'; },2200);
 }));
 
+function createDiagramViewer() {
+  const dialog = document.createElement('dialog');
+  dialog.className = 'diagram-dialog';
+  dialog.setAttribute('aria-labelledby', 'diagram-viewer-title');
+  dialog.innerHTML = `
+    <header class="diagram-dialog-header">
+      <h2 id="diagram-viewer-title"></h2>
+      <div class="diagram-dialog-actions">
+        <button type="button" data-diagram-fit aria-pressed="true">查看全图</button>
+        <button type="button" data-diagram-original aria-pressed="false">原始尺寸</button>
+        <button type="button" data-diagram-close autofocus>关闭</button>
+      </div>
+    </header>
+    <div class="diagram-viewer" role="region" tabindex="0" aria-label="可滚动的图形预览"></div>`;
+  document.body.append(dialog);
+
+  const title = dialog.querySelector('h2');
+  const viewer = dialog.querySelector('.diagram-viewer');
+  const fit = dialog.querySelector('[data-diagram-fit]');
+  const original = dialog.querySelector('[data-diagram-original]');
+  let opener;
+  let imageUrl;
+
+  function showOriginal(enabled) {
+    dialog.classList.toggle('is-original', enabled);
+    fit.setAttribute('aria-pressed', String(!enabled));
+    original.setAttribute('aria-pressed', String(enabled));
+    viewer.scrollTo(0, 0);
+  }
+  fit.addEventListener('click', () => showOriginal(false));
+  original.addEventListener('click', () => showOriginal(true));
+  dialog.querySelector('[data-diagram-close]').addEventListener('click', () => dialog.close());
+  dialog.addEventListener('close', () => {
+    viewer.replaceChildren();
+    URL.revokeObjectURL(imageUrl);
+    opener?.focus({preventScroll:true});
+  });
+
+  return (svg, label, button) => {
+    const picture = svg.cloneNode(true);
+    const {width, height} = svg.viewBox.baseVal;
+    picture.setAttribute('width', width);
+    picture.setAttribute('height', height);
+    picture.style.removeProperty('max-width');
+    imageUrl = URL.createObjectURL(new Blob([new XMLSerializer().serializeToString(picture)], {type:'image/svg+xml'}));
+    title.textContent = label;
+    const image = document.createElement('img');
+    image.alt = label;
+    image.src = imageUrl;
+    viewer.replaceChildren(image);
+    opener = button;
+    showOriginal(false);
+    dialog.showModal();
+  };
+}
+
 async function renderDiagrams() {
   const nodes = [...document.querySelectorAll('.mermaid')];
   if (!nodes.length) return;
   try {
     const {default: mermaid} = await import('./mermaid.js');
     mermaid.initialize({startOnLoad:false, securityLevel:'strict', theme:'base', fontFamily:'-apple-system, BlinkMacSystemFont, PingFang SC, Microsoft YaHei, sans-serif', themeVariables:{primaryColor:'#e4f0f1',primaryTextColor:'#173b40',primaryBorderColor:'#85a9ad',lineColor:'#48767b',secondaryColor:'#eef4f4',tertiaryColor:'#f7f8f3'}, flowchart:{useMaxWidth:true,htmlLabels:false}, sequence:{useMaxWidth:true,wrap:true}});
+    let openViewer;
     for (const node of nodes) {
       try {
         const source = node.textContent;
         const {svg} = await mermaid.render(`diagram-${node.dataset.diagram}`, source);
         node.innerHTML = svg;
-        node.closest('figure').querySelector('details').open = false;
+        const figure = node.closest('figure');
+        figure.querySelector('details').open = false;
+
+        const picture = node.querySelector('svg');
+        if (picture?.viewBox.baseVal.width > 0 && picture.viewBox.baseVal.height > 0) {
+          const label = picture.querySelector('title')?.textContent
+            || figure.closest('.chapter')?.querySelector('h2, h3')?.childNodes[0]?.textContent
+            || '图形预览';
+          const toolbar = document.createElement('div');
+          toolbar.className = 'diagram-toolbar';
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.textContent = '查看大图';
+          button.setAttribute('aria-label', `查看大图 ${label}`);
+          button.addEventListener('click', () => {
+            openViewer ??= createDiagramViewer();
+            openViewer(picture, label, button);
+          });
+          toolbar.append(button);
+          figure.prepend(toolbar);
+        }
       } catch {
         node.innerHTML = '<p class="diagram-error">图形暂时无法显示，可展开下方流程源码阅读。</p>';
         const figure = node.closest('figure');

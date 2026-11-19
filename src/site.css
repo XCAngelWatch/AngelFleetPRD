@@ -96,6 +96,19 @@ tr[id^='ga-']:target { background: #e2f2f1; }
 tr[id^='ga-']:target td:first-child { box-shadow: inset 3px 0 var(--accent); }
 td:first-child { min-width: 150px; }
 table code { overflow-wrap: anywhere; }
+.gantt-table { table-layout: fixed; min-width: 650px; font-size: 12px; }
+.gantt-table th, .gantt-table td { min-width: 0; padding: 8px 6px; text-align: center; vertical-align: middle; }
+.gantt-table th:first-child, .gantt-table td:first-child { position: sticky; left: 0; width: 164px; padding-inline: 10px; text-align: left; border-right: 1px solid var(--line); z-index: 1; }
+.gantt-table td:first-child { background: var(--paper); }
+.gantt-table tbody tr:nth-child(even) td:first-child { background: #f8fafb; }
+.gantt-table td:not(:first-child) { border-inline-end: 1px solid var(--line); color: var(--muted); }
+.gantt-table td:last-child { border-inline-end: 0; }
+.gantt-workdays { position: relative; font-variant-numeric: tabular-nums; }
+.gantt-workdays::after { content: ''; position: absolute; left: var(--offset); width: var(--duration); bottom: 6px; height: 4px; background: var(--accent); border-radius: 2px; }
+.gantt-table .gantt-workdays { color: var(--ink); padding-bottom: 14px; }
+.gantt-milestones { font-weight: 600; }
+.gantt-milestones .gantt-workdays::after { left: calc(var(--offset) + 10% - 3px); bottom: 6px; width: 6px; height: 6px; border-radius: 0; background: var(--notice); transform: rotate(45deg); }
+.gantt-table td em { font-style: normal; color: var(--notice); }
 code, pre, kbd { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 :not(pre) > code { background: var(--code); color: #1c555b; font-size: .87em; border-radius: 3px; padding: 2px 5px; }
 .code-block { position: relative; margin: 24px 0; }
@@ -105,7 +118,21 @@ pre code { font: inherit; }
 .copy-code:hover { background: #3c626d; }
 .diagram { margin: 28px 0; padding: 22px 14px 12px; background: #f6f9f9; border: 1px solid var(--line); border-radius: 5px; }
 .mermaid { overflow-x: auto; text-align: center; min-height: 90px; }
-.mermaid svg { max-width: 100% !important; height: auto; }
+.mermaid svg { display: block; margin-inline: auto; max-width: 100% !important; height: auto; }
+.diagram-toolbar { display: flex; justify-content: flex-end; margin-bottom: 8px; }
+.diagram-toolbar button, .diagram-dialog button { color: var(--ink); background: var(--paper); border: 1px solid #adc3c6; border-radius: 5px; padding: 8px 12px; min-height: 40px; font-size: 13px; }
+.diagram-toolbar button:hover, .diagram-dialog button:hover { border-color: var(--accent); }
+.diagram-dialog button[aria-pressed='true'] { color: #fff; background: var(--accent); border-color: var(--accent); }
+.diagram-dialog { width: min(1280px, calc(100vw - 32px)); height: min(900px, calc(100dvh - 32px)); max-width: none; max-height: none; padding: 0; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); color: var(--ink); }
+.diagram-dialog[open] { display: flex; flex-direction: column; }
+.diagram-dialog::backdrop { background: #102a31aa; }
+.diagram-dialog-header { flex: none; display: flex; align-items: center; flex-wrap: wrap; gap: 10px 14px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+.diagram-dialog-header h2 { flex: 1 1 160px; margin: 0; font-size: 17px; line-height: 1.4; overflow-wrap: anywhere; }
+.diagram-dialog-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.diagram-viewer { flex: 1; min-height: 0; min-width: 0; overflow: auto; padding: 12px; background: var(--ground); }
+.diagram-viewer:focus-visible { outline: 3px solid #d98633; outline-offset: -3px; }
+.diagram-viewer img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.diagram-dialog.is-original img { width: auto; height: auto; margin-inline: auto; }
 .diagram summary { cursor: pointer; font-size: 12px; color: var(--muted); padding: 10px 0 0; }
 .diagram pre { text-align: left; }
 .diagram-error { padding: 12px; font-size: 13px; color: var(--notice); }
@@ -151,11 +178,14 @@ pre code { font: inherit; }
   .chapter p, .chapter li { font-size: 14px; line-height: 1.95; }
   .heading-link { opacity: .65; }
   th, td { padding: 10px 12px; min-width: 150px; }
+  .gantt-table th:first-child, .gantt-table td:first-child { width: 124px; }
   .diagram { padding: 14px 8px 8px; }
-  .mermaid svg { max-width: none !important; min-width: 560px; }
+  .diagram-dialog { width: calc(100vw - 16px); height: calc(100dvh - 16px); }
+  .diagram-dialog-header { padding: 10px 12px; }
   pre { padding: 38px 15px 18px; font-size: 11px; }
   .back-top { right: 14px; bottom: 14px; padding: 8px 11px; }
 }
+@media screen and (scripting: none) { .mermaid { display: none; } }
 @media screen and (max-width: 760px) and (scripting: none) {
   .menu-toggle, .search-trigger { display: none; }
   .sidebar { position: static; width: auto; height: auto; max-height: 40dvh; transform: none; visibility: visible; padding: 12px 18px; }
@@ -164,7 +194,7 @@ pre code { font: inherit; }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; } }
 @media print {
   :root { background: white; color: black; }
-  .masthead, .sidebar, .back-top, .heading-link, .copy-code, .search-dialog, .skip-link, .nav-backdrop { display: none !important; }
+  .masthead, .sidebar, .back-top, .heading-link, .copy-code, .search-dialog, .skip-link, .nav-backdrop, .diagram-toolbar, .diagram-dialog { display: none !important; }
   .layout { display: block; }
   .article-wrap { padding: 0; }
   .document { max-width: none; }
@@ -173,10 +203,14 @@ pre code { font: inherit; }
   .table-scroll, pre, .mermaid { overflow: visible; }
   table { font-size: 9px; }
   th, td { min-width: 0; padding: 5px; }
+  .gantt-table { min-width: 0; font-size: 9px; }
+  .gantt-table th:first-child, .gantt-table td:first-child { position: static; width: 25%; }
+  .gantt-workdays::after { print-color-adjust: exact; }
   pre { white-space: pre-wrap; overflow-wrap: anywhere; color: black; background: #f3f3f3; }
   a { color: inherit; }
   .diagram details { display: none; }
   .diagram.diagram-failed details, .diagram:not(:has(.mermaid svg)) details { display: block; }
-  .mermaid svg { width: 100%; max-width: 100% !important; min-width: 0 !important; }
+  .diagram { break-inside: avoid; }
+  .mermaid svg { width: auto; max-width: 100% !important; max-height: 210mm; }
   .document-footer { font-size: 9px; }
 }

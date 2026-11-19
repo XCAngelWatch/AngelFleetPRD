@@ -43,4 +43,4 @@ flowchart TD
 
 GA-01 接口契约和样例已验证。GA-10 真机验收待执行。单租户 10,000 节点另做持续混合负载验收。
 
-[看研发计划与先领任务](go-agent-development-plan.md#三批派工总览) · [看技术方案](technical-plan.md) · [看已取得的验收证据](spaces/implementation-review.md#实测记录)
+[查看 M1 排期与甘特图](go-agent-development-plan.md#m1-排期与甘特图) · [查看三批派工](go-agent-development-plan.md#三批派工总览) · [看技术方案](technical-plan.md) · [看已取得的验收证据](spaces/implementation-review.md#实测记录)
