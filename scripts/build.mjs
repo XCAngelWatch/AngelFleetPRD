@@ -6,6 +6,8 @@ import { build } from 'esbuild';
 
 const siteMeta = JSON.parse(await readFile('docs/site-meta.json', 'utf8'));
 const acceptanceIds = JSON.parse(await readFile('docs/acceptance-ids.json', 'utf8'));
+const stylesheet = await readFile('src/site.css');
+const stylesheetVersion = createHash('sha256').update(stylesheet).digest('hex').slice(0, 12);
 async function removeAppleDoubleFiles(directory) {
   for (const entry of await readdir(directory, {withFileTypes:true})) {
     const path = `${directory}/${entry.name}`;
@@ -247,7 +249,7 @@ function renderPage(doc) {
 <meta name="description" content="${escape(description)}">
 <meta name="theme-color" content="#143b40"><meta property="og:title" content="${escape(title)}"><meta property="og:description" content="${escape(description)}"><meta property="og:type" content="article"><meta property="og:url" content="${canonical}">
 <meta property="og:image" content="${site}assets/og-card.svg"><meta property="og:image:type" content="image/svg+xml"><meta name="twitter:card" content="summary"><meta name="twitter:title" content="${escape(title)}"><meta name="twitter:description" content="${escape(description)}">
-<link rel="canonical" href="${canonical}"><link rel="icon" type="image/svg+xml" href="assets/favicon.svg"><link rel="stylesheet" href="assets/site.css">
+<link rel="canonical" href="${canonical}"><link rel="icon" type="image/svg+xml" href="assets/favicon.svg"><link rel="stylesheet" href="assets/site.css?v=${stylesheetVersion}">
 </head>
 <body id="top" data-page="${doc.file}">
 <a class="skip-link" href="#main">跳转到正文</a>
@@ -285,7 +287,7 @@ for (const doc of documents) {
   await writeFile(`dist/${doc.file}`, renderPage(doc));
 }
 await writeFile('dist/.nojekyll','');
-await copyFile('src/site.css','dist/assets/site.css');
+await writeFile('dist/assets/site.css',stylesheet);
 const downloads = new Set([...documents.map(doc => doc.markdown), ...supportingDocs, 'command-state.json', 'acceptance-ids.json']);
 for (const document of downloads) {
   const destination = `dist/${document}`;
