@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import assert from 'node:assert/strict';
 
 const source = await readFile('docs/technical-plan.md','utf8');
+const productPrd = await readFile('docs/product-prd.md','utf8');
 const html = await readFile('dist/index.html','utf8');
 const manifest = JSON.parse(await readFile('dist/build-manifest.json','utf8'));
 const siteMeta = JSON.parse(await readFile('docs/site-meta.json','utf8'));
@@ -19,6 +20,7 @@ assert.equal(manifest.bodyChapters,bodyChapterCount,'Manifest body chapter count
 assert.equal(manifest.appendices,appendixCount,'Manifest appendix count must follow source headings');
 assert.equal(manifest.sourceSha256,createHash('sha256').update(source).digest('hex'),'Build does not match current source');
 assert.equal(await readFile('dist/technical-plan.md','utf8'),source,'Download must match repository source');
+assert.equal(await readFile('dist/product-prd.md','utf8'),productPrd,'Product PRD download must match repository source');
 assert.equal(await readFile('dist/operation-ledger.md','utf8'),await readFile('docs/operation-ledger.md','utf8'),'Operation ledger download must match repository source');
 for (const document of supportingDocs) assert.equal(await readFile(`dist/${document}`,'utf8'),await readFile(`docs/${document}`,'utf8'),`${document} download must match repository source`);
 assert.deepEqual(builtStateDefinition,stateDefinition,'Command state fixture must match repository source');
@@ -37,7 +39,7 @@ for (const [,path] of html.matchAll(/(?:href|src)="([^"#]+)"/g)) {
 }
 assert(!/\/Volumes\/|\/Users\/|visualize:|page_c8db|chatgpt\.com\/space/.test(source+html),'Private source reference was published');
 assert(!/gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/.test(source+html),'Credential-like content detected');
-for (const required of ['XCtechResource','core/agent','72h','UNCERTAIN','REVIEW_REQUIRED','REQ10','REQ11','REQ12','DEV08','CAP-01','NET','maxAuthorizationStaleness','managementMode','max_batch_timeout','参数冻结表','可选系统 OTA']) assert(source.includes(required),`Required topic missing: ${required}`);
+for (const required of ['XCtechResource','core/agent','72h','UNCERTAIN','REVIEW_REQUIRED','REQ10','REQ11','REQ12','DEV08','CAP-01','NET','maxAuthorizationStaleness','managementMode','executionPrincipal','startGrant','first-primary','evidenceHandoff','synchronous=FULL','max_batch_timeout','参数冻结表','可选系统 OTA']) assert(source.includes(required),`Required topic missing: ${required}`);
 assert.equal(manifest.diagrams,manifest.diagramSources,'Manifest diagram count must match Mermaid sources');
 assert(manifest.diagrams >= 8,'Expected the baseline diagrams plus the public flow diagrams');
 assert.equal(manifest.searchRecords,searchData.length,'Search manifest count must match embedded index');
@@ -72,10 +74,11 @@ assert(source.includes('异常与竞争事件索引') && source.includes('comman
 assert(source.includes('IDEMPOTENCY_KEY_EXPIRED') && source.includes('IDEMPOTENCY_INTENT_MISMATCH'),'Idempotency mismatch outcomes must be explicit');
 assert(source.includes('cancel_ineffective') && !source.match(/cancel_intent[^\n]*INEFFECTIVE/),'Cancellation ineffectiveness must have one persistence representation');
 assert(/resource_version\s+TEXT NOT NULL/.test(source),'commands schema must persist resource_version');
+assert(source.includes("side_effect_extent IN ('NONE', 'PARTIAL', 'FULL', 'UNKNOWN')"),'commands schema must represent unknown side effects');
 assert(/last_error\s+TEXT/.test(source),'outbox schema must persist last_error');
 const logicalSchemaRows = Object.fromEntries([...source.matchAll(/^\| (tenant_members|nodes|enrollments|commands|idempotency_receipts|outbox|command_events|terminal_sessions|artifacts|audit_events) \| ([^\n]+) \|$/gm)].map(([,table,fields]) => [table,fields.split('；')[0]]));
 const sqlSchema = Object.fromEntries([...source.matchAll(/CREATE TABLE ([a-z_]+) \(([\s\S]*?)\n\);/g)].map(([,table,body]) => [table,new Set(body.split('\n').map(line => line.trim().match(/^([a-z_][a-z0-9_]*)\s+/)?.[1]).filter(Boolean))]));
-const schemaAliases = {evidenceRefs:'evidence_refs_json',capabilities:'capabilities_json',eventJson:'event_json'};
+const schemaAliases = {evidenceRefs:'evidence_refs_json',capabilities:'capabilities_json',eventJson:'event_json',resolvedResource:'resolved_resource_json'};
 const toSqlName = field => schemaAliases[field] ?? field.replace(/[A-Z]/g,letter => `_${letter.toLowerCase()}`);
 for (const [table,fieldText] of Object.entries(logicalSchemaRows)) {
   if (!sqlSchema[table]) continue;

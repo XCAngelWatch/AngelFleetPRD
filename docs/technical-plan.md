@@ -1,8 +1,8 @@
 # 1Panel v2 Cloudflare 控制面详细技术方案
 
-复用 XCtechResource 的 React/Next.js 前端工程与 Cloudflare 服务基础，迁移 1Panel v2 的完整运维功能。Go 的容器、网站、数据库、文件、备份及主机执行能力继续复用。首版以 XC React 控制台、Cloudflare 控制面、connector 和原 core/agent 完成功能闭环；原 core 最终退役单列后续阶段。本文聚焦功能范围、代码复用边界、接口协议、数据归属、迁移步骤和验收，不纳入定价与费用模型。
+复用 XCtechResource 的 React/Next.js 前端工程与 Cloudflare 服务基础，迁移 1Panel v2 的完整运维功能。Go 的容器、网站、数据库、文件、备份及主机执行能力继续复用。首版以 XC React 控制台、Cloudflare 控制面、connector 和原 core/agent 完成功能闭环；原 core 最终退役单列后续阶段。本文是详细技术方案与实施基线，产品目标、MVP、核心旅程和高层验收见 [`docs/product-prd.md`](product-prd.md)。本文聚焦功能范围、代码复用边界、接口协议、数据归属、迁移步骤和验收，不纳入定价与费用模型。
 
-**设计版本 2.4 · 实施状态：实施设计，待 P0–P6 分阶段验收**
+**设计版本 2.5 · 实施状态：实施设计，待 P0–P6 分阶段验收**
 
 本方案定义 XC React、Cloudflare 控制面、connector 与 Go 执行栈之间的最终职责边界。1Panel 的主机、容器、网站、数据库、文件、备份和终端能力继续由 Go 执行；Cloudflare 负责身份、租户、授权、任务编排、审计和可靠事件；XC React 负责统一运维体验。代码复用输入必须在实施时固定为可复现提交，具体入口和迁移边界见附录 B。
 
@@ -143,6 +143,9 @@ flowchart TB
 | xc-console | XC React 布局、账号权限、运维页面、节点上下文、任务中心 | 页面使用统一领域 API，未知节点深链接无需重新构建 |
 | web-gateway | 静态资源、同域会话、CSRF、Origin、API 与 WSS 入口 | Upgrade 在普通 JSON/CORS 包装前分流 |
 | control-api | 租户与节点授权、命令准入、资源目录、配置、审计 | 提交命令意图后返回稳定 ID |
+| control-gateway | 接收区域 Relay 的受认证隧道、按节点身份路由控制帧和流帧 | mTLS 只认证 Relay，仍需核验节点公钥、租户归属、nodeId、incarnation 和 connectionEpoch |
+| cn-relay-cluster | 中国大陆设备的 WSS 终止、心跳、重连、健康摘除和帧转发 | 使用主/备区域入口；不保存业务事实，由独立部署和运维责任承担 |
+| global-relay-cluster | 海外设备的 WSS 终止、心跳、重连、健康摘除和帧转发 | 按区域接入最近 Relay；不保存业务事实，由独立部署和运维责任承担 |
 | node-session | AgentConn DO、节点握手、代次、投递和结果缓冲 | 连接与执行状态分别恢复 |
 | terminal-relay | 角色票据、租约、会话绑定、credit | 每会话隔离，支持撤销和受控重附着 |
 | tenant-data-N | 目录映射、已绑定租户 D1 的领域接口 | 不接收客户端 SQL 或数据库标识 |
@@ -160,19 +163,37 @@ flowchart LR
     GW --> API[Control API]
     API --> TD[TenantData Worker]
     TD --> DB[(Tenant D1)]
-    API --> AD[AgentConn DO]
-    API --> RT[TerminalRelay DO]
+    CNR[CN Relay 集群]
+    GLR[Global Relay 集群]
+    CNC[中国大陆 Connector]
+    GLC[海外 Connector]
+    CNR -->|受认证 mTLS 隧道| CGW[Control Gateway]
+    GLR -->|受认证 mTLS 隧道| CGW
+    CGW --> AD[AgentConn DO]
+    CGW --> RT[TerminalRelay DO]
+    API --> AD
+    API --> RT
     API --> Q[Queues / Workflows]
     API --> R2[(R2)]
-    AD <-->|控制 WSS| C[Connector]
-    RT <-->|终端 WSS| C
     Q -.补偿.-> AD
-    C --> EA[Execution Adapter]
+    AD -.控制帧.-> CNR
+    AD -.控制帧.-> GLR
+    RT -.流帧.-> CNR
+    RT -.流帧.-> GLR
+    CNR <-->|设备 WSS| CNC
+    GLR <-->|设备 WSS| GLC
+    CNC --> EA[Execution Adapter]
+    GLC --> EA
     EA --> GO[Go core / agent]
-    C <--> R2
+    CNC <--> R2
+    GLC <--> R2
 ```
 
-这张图只表达部署边界：控制 API、实时流、对象传输和节点执行彼此分离；Queue 是补偿路径，不是在线命令的唯一入口。
+这张图只表达部署边界：浏览器入口、全球控制面、区域设备接入、实时流、对象传输和节点执行彼此分离。区域 Relay 负责连接承载和帧转发，不是业务事实来源；Queue 是补偿路径，不是在线命令的唯一入口。
+
+首版按两类区域接入路径设计。中国大陆设备使用服务端分配的 `regionId`、主 WSS 入口和备用 WSS 入口，海外设备使用全球区域 Relay 的对应入口。DNS 只参与初次选路，已有连接断开后才按设备配置切换备用入口。Relay 到 Control Gateway 的 mTLS 隧道只证明 Relay 身份，不能替代设备公钥、短期连接凭证、租户绑定、`nodeId`、`nodeIncarnation` 和 `connectionEpoch` 校验。
+
+当前设计假设控制面数据可以使用 Cloudflare 全球服务。若数据驻留或监管要求覆盖 D1、Durable Objects、Queues、R2、日志和控制命令，必须另立双控制面 ADR，明确大陆本地数据库、消息系统、故障切换和跨控制面同步边界；区域 Relay 本身不能满足该要求。Cloudflare China Network、其他大陆边缘入口和自建 Relay 均保持为 P0/P1 接入 PoC 选项，具体套餐、ICP、产品可用性和跨境链路需单独复核。
 
 Worker 之间使用 Service Binding，DO 通过 namespace binding 访问，D1 通过数据 Worker 已部署的 binding 访问。Service Binding RPC 是对象能力，不等于租户授权；调用方必须等待每次调用，provider 只暴露显式领域方法并再次核对主体、tenant、角色和 command scope，记录每次 binding invocation。单次请求的 Worker-to-Worker 调用预算（官方上限 32 次）进入 CAP 指标；provider 先发布、调用方后切换，删除方法前先完成调用方迁移。公网传入的身份头在入口统一清理，服务层根据已验证主体重建调用上下文。日志中统一携带 traceId、tenantId、nodeId、commandId 或 terminalId。[Service Binding RPC](https://developers.cloudflare.com/workers/runtime-apis/bindings/service-bindings/)
 
@@ -200,7 +221,9 @@ Workers 的平台边界与套餐数字集中见 [`docs/platform-constraints.md`]
 
 ## 6.1 租户供给和数据路由
 
-目录库记录 tenantId、dataShardId、bindingAlias、regionPolicy、schemaVersion、routingVersion、status。登录身份与全局租户目录分离，租户成员权限及业务数据在租户库中。请求先确定主体有权进入的租户，再从服务端目录解析到预部署的数据 Worker。该 Worker 再确认租户与 binding 的映射，执行预定义领域方法。
+目录库记录 tenantId、dataShardId、bindingAlias、regionPolicy、regionId、primaryRelay、secondaryRelay、schemaVersion、routingVersion、status。登录身份与全局租户目录分离，租户成员权限及业务数据在租户库中。请求先确定主体有权进入的租户，再从服务端目录解析到预部署的数据 Worker。该 Worker 再确认租户与 binding 的映射，执行预定义领域方法。
+
+节点注册完成后，服务端根据节点所在区域和已冻结的接入策略分配 `regionId`、主 WSS 入口和备用 WSS 入口。设备保存这组配置并在断线后优先回到当前区域，区域内主入口连续失败才切换备用入口。Relay 只保存连接所需的短期状态，连接顺序、ACK、代次和任务结果仍由 AgentConn DO、Tenant D1 与节点 journal 分别负责。
 
 租户库供给状态依次为 REQUESTED、DB_CREATED、MIGRATED、BOUND、VERIFIED、ACTIVE。自动化先建库和执行迁移，再发布含该 D1 binding 的数据 Worker，并发布上游到该数据 Worker 的 Service Binding。BOUND 同时确认这两层绑定，通过完整调用路径的读写探针后才发布目录路由。失败停留在可见状态并重试。删除按 QUIESCING、EXPORTED、UNBOUND、DELETED 推进，目录保留墓碑。Cloudflare 管理 API 凭据只供给服务和发布流水线持有。
 
@@ -232,7 +255,7 @@ flowchart TD
 
 数据沿着“目录路由 → 租户状态 → 节点协调 → 主机事实”方向流动；任何一层都不能用展示缓存或客户端字段替代上游权威。
 
-权限撤销、任务状态推进及配置修改采用主库权威读取与条件写入。目录或展示缓存具有版本与 TTL，缓存过期或授权版本不确定时重新查询。D1 read replication 仍是异步副本能力，复制延迟没有硬上界；Sessions/bookmark 只提供顺序一致读取，不把副本变成强一致主库。授权、撤销、命令状态、resourceVersion、配额和恢复读一律走 primary 或同一 Sessions；只有报表/展示查询在声明 maxStaleness、返回 served_by_region/served_by_primary 并具备 primary fallback 后才允许走副本。bookmark 丢失、lag 超阈值或复制开关关闭时回主库。[D1 read replication](https://developers.cloudflare.com/d1/best-practices/read-replication/)
+权限撤销、任务状态推进及配置修改采用主库权威读取与条件写入。目录或展示缓存具有版本与 TTL，缓存过期或授权版本不确定时重新查询。D1 read replication 仍是异步副本能力，复制延迟没有硬上界；Sessions/bookmark 只提供顺序一致读取，不把副本变成强一致主库。授权、撤销、命令状态、resourceVersion、配额、启动准入和恢复读固定走 primary 或 `first-primary` 会话，不能使用旧 bookmark 或 `first-unconstrained` 会话证明最新授权。只有报表/展示查询在声明 maxStaleness、返回 served_by_region/served_by_primary 并具备 primary fallback 后才允许走副本。bookmark 丢失、lag 超阈值或复制开关关闭时回主库。[D1 read replication](https://developers.cloudflare.com/d1/best-practices/read-replication/)
 
 ## 6.3 索引与约束设计
 
@@ -262,6 +285,8 @@ sequenceDiagram
     N->>C: ready 确认本地代次已持久化
     C->>C: 校验 ready 后激活当前连接
 ```
+
+注册响应除节点身份和能力配置外，还返回服务端分配的 `regionId`、`primaryRelay` 和 `secondaryRelay`。Relay 建链后把设备证明和连接上下文转发到 Control Gateway，Gateway 再将帧路由到对应 AgentConn DO。Relay 的 mTLS 身份不能替代设备公钥挑战、租户与节点绑定、`nodeIncarnation` 和 `connectionEpoch` 校验。
 
 ## 7.2 断线后的任务对账
 
@@ -318,6 +343,7 @@ sequenceDiagram
     participant D as Tenant D1
     participant N as AgentConn DO
     participant Q as Queue 补偿
+    participant R as 区域 Relay
     participant C as Connector
     participant J as 本地 journal
     participant G as Go 执行器
@@ -325,11 +351,13 @@ sequenceDiagram
     A->>D: 校验授权并写 command + outbox
     D-->>A: 返回 commandId / revision
     A->>N: dispatchKick(commandId, eventId, revision)
-    N->>C: WSS 投递已授权命令
+    N->>R: 投递已授权命令
+    R->>C: 区域 WSS 转发
     C->>J: 记录意图与 operationMarker
     J->>G: 调用受控执行器
     G-->>J: 结果 / checkpoint
-    J-->>N: 结果事件
+    J-->>R: 结果事件
+    R-->>N: 转发结果事件
     N-->>D: CAS 合并状态与审计
     A-->>U: 查询结果与证据
     A-->>Q: 快路径失败时保留 outbox 补偿
@@ -346,7 +374,7 @@ Panel MCP 在云端提供凭据、工具目录、admission、节点范围和审�
 
 任务状态、幂等、取消、未知结果和恢复以附录 A.5–A.6、C.1–C.3 为唯一执行语义。本节只保留适配边界：适配器必须持久保存 `cloudCommandId`、`nodeIncarnation`、`intentHash`、`localTaskId` 或 `operationMarker`、checkpoint 和结果摘要；调用前先记录意图，响应丢失时查询原任务或现场证据，不能自动创建第二个未知副作用。无稳定关联的非幂等入口必须补 Go hook，并覆盖调用前、Go 已启动但回执丢失、结果已生成但云端未确认三个故障点。[当前 Go 异步执行](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/agent/app/service/app_install.go)
 
-# 9. 终端、实时流与国内链路
+# 9. 终端、实时流与区域接入
 
 每次终端创建产生独立 terminalId 和 Relay。connector 经控制连接收到 prepare 后主动建立另一条 WSS，浏览器使用独立角色票据加入。两端就绪后，由节点适配器创建或重附着原 Go PTY/SSH/容器 exec。日志尾随、进程流与 VM console 共用授权和会话生命周期，但采用各自的数据适配器。
 
@@ -368,9 +396,11 @@ SSH 保留原 Go SSH/PTY 实现及终端交互语义，界面使用 XC React 与
 
 终端并发、帧大小、credit、缓冲和断线恢复参数集中见附录 A.9；本节只强调控制连接与实时流分离，慢浏览器不得拖垮节点控制通道，未确认输入不得自动重放。
 
-国内代理建立受控 CONNECT/L4 转发，海外节点直接接入。代理需覆盖长连接空闲超时、并发配额、连接速率、DNS、TLS与故障切换。R2 与安装包下载另设 egress 路由和带宽预算。代理可以改善可达性，终端体验仍由浏览器、Cloudflare 边缘、DO 所在区域、代理和 agent 的完整路径决定。
+中国大陆设备的主路径为 `ws-cn.<domain>` → 中国大陆 Relay 集群 → 受认证的 mTLS 隧道 → Control Gateway。海外设备的主路径为 `ws-global.<domain>` → 全球 Relay 集群 → 受认证的 mTLS 隧道 → Control Gateway。Relay 终止设备 WSS，负责心跳、重连、健康摘除、限流、背压和帧转发；它不保存租户业务状态、命令最终状态或主机事实。Relay 集群需明确部署方、证书轮换、容量水位、健康检查和故障责任。
 
-若国内用户与节点具备可达的安全 WSS 入口，PoC 同时评估短期角色票据的直连路径。直连需要可达地址、证书、Origin 校验、节点授权和租约撤销闭环，NAT 后的节点仍需入口或代理。触发条件以实际路径探测和延迟策略决定，用户界面显示当前链路并保留 Relay 回退。是否进入 v1 由第 15 节链路验收结果决定。
+设备注册后固定服务端分配的 `regionId`，保存主 WSS 入口和备用 WSS 入口。DNS 只参与首次选路，断线后先重连当前区域主入口，再切换当前区域备用入口。新连接必须递增 `connectionEpoch`。旧连接迟到帧按 epoch 和 incarnation 丢弃或进入核对，未完成命令进入 `RECONCILING`，不得因为切换 Relay 自动重新执行。控制命令、终端流和 R2 文件传输分别测量完整路径，不把 Relay ACK 解释为业务完成。
+
+中国大陆入口可以评估 Cloudflare China Network、其他大陆边缘入口或自建 Relay，但它们都属于 P0/P1 接入 PoC。Cloudflare China Network 的套餐、ICP、产品可用性、跨境隧道和 mTLS 部署方式需单独确认。若控制面数据必须全部留在中国大陆，区域 Relay 不能替代大陆控制面，需另立双控制面 ADR。直连设备入口只作为后续 PoC，必须具备证书、Origin、节点授权、租约撤销和 NAT 可达性闭环。
 
 DO locationHint 是尽力而为的位置提示，不能据此保证城市级位置或迁移既有对象。D1 与 DO jurisdiction 可用于支持范围内的地域约束，R2、Queues、Workflows、日志和代理需要分别核对地域要求。[DO 数据位置](https://developers.cloudflare.com/durable-objects/reference/data-location/)、[D1 数据位置](https://developers.cloudflare.com/d1/configuration/data-location/)
 
@@ -639,7 +669,7 @@ P0 在压测前冻结负载文件与摘要：命令/秒及操作比例、突发�
 
 ### 15.3.1 R1 命令状态、并发事件与证据裁决
 
-命令的执行事实、取消意图和对账状态不能由一个字段互相覆盖。规范状态记录至少包含 `state`、`lastKnownExecutionState`、`cancelIntent`、`reconcileState`、`sideEffectExtent`、`evidenceRefs` 和 `revision`。完整状态集合与 39 条允许边以版本化 [`docs/command-state.json`](command-state.json) 为唯一机器可读权威；下表是实现评审使用的异常与竞争事件索引，不得据此推导未列出的正常路径。CAS 合并函数和状态图必须逐边对照该 fixture。
+命令的执行事实、取消意图和对账状态不能由一个字段互相覆盖。规范状态记录至少包含 `state`、`lastKnownExecutionState`、`cancelIntent`、`reconcileState`、`sideEffectExtent`、`evidenceRefs` 和 `revision`。`sideEffectExtent=UNKNOWN` 表示已有执行或副作用证据，但当前无法安全判断范围，不能按 `NONE` 进入过期、取消完成或清理路径。完整状态集合与 39 条允许边以版本化 [`docs/command-state.json`](command-state.json) 为唯一机器可读权威；下表是实现评审使用的异常与竞争事件索引，不得据此推导未列出的正常路径。CAS 合并函数和状态图必须逐边对照该 fixture。
 
 | 事件索引 | 允许来源 | 目标 | 守卫与证据 |
 |---|---|---|---|
@@ -652,11 +682,11 @@ P0 在压测前冻结负载文件与摘要：命令/秒及操作比例、突发�
 | 无法安全判定 | UNCERTAIN、REVIEW_REQUIRED | REVIEW_REQUIRED | `REVIEW_REQUIRED` 是人工待决终态，不自动改写成功或失败 |
 | 晚到结果 | 任一已应用或人工结论 | 原命令状态（事件 `applyState=CONFLICT`） | 按 `eventId + agentEventSequence` 去重；冲突只追加证据和审计，不覆盖人工结论 |
 
-终态集合为 `{SUCCEEDED, FAILED, CANCELLED, EXPIRED, REJECTED, REVIEW_REQUIRED}`。`CANCELLED` 表示停止后续执行，不表示已回滚；`sideEffectExtent` 取 `NONE/PARTIAL/FULL`，实际回滚必须是操作契约声明的补偿步骤并创建关联的新 `commandId`。人工处置记录处置人、时间、权限、依据证据和结论；`UNRESOLVED` 保留 `REVIEW_REQUIRED`。AC-CMD/FI-CMD 增加取消/完成竞争、部分副作用、人工未决、人工后晚到结果一致与冲突、RUNNING 失联六类用例。
+终态集合为 `{SUCCEEDED, FAILED, CANCELLED, EXPIRED, REJECTED, REVIEW_REQUIRED}`。`CANCELLED` 表示停止后续执行，不表示已回滚；`sideEffectExtent` 取 `NONE/PARTIAL/FULL/UNKNOWN`。只有可信未启动证据才能把未知收敛为 `NONE`。实际回滚必须是操作契约声明的补偿步骤并创建关联的新 `commandId`。人工处置记录处置人、时间、权限、依据证据和结论；`UNRESOLVED` 保留 `REVIEW_REQUIRED`。AC-CMD/FI-CMD 增加取消/完成竞争、部分副作用、未知副作用、人工未决、人工后晚到结果一致与冲突、RUNNING 失联六类用例。
 
 ### 15.3.2 R2 云端幂等记录与节点去重分层
 
-HTTP 幂等键和节点 `commandId` tombstone 是两层不同保护。服务端首次创建时固定 `expiresAt`，客户端重试必须复用原始 body、`resourceVersion` 和过期策略；刷新资源版本或延长有效期属于新意图、新 key。服务端先完成当前身份、租户、节点和权限版本校验，再查询幂等收据，不能用旧 key 绕过撤权。
+HTTP 幂等键和节点 `commandId` tombstone 是两层不同保护。服务端首次创建时固定 `expiresAt`，客户端重试必须复用原始 body、解析后的资源引用快照、resourceVersion 和过期策略；刷新资源版本或延长有效期属于新意图、新 key。服务端先完成当前身份、租户、节点和权限版本校验，再查询幂等收据，不能用旧 key 绕过撤权。重放只回放首次保存的不可变意图和资源绑定，不按当前 alias 重新解析。
 
 `requestFingerprint` 计算规范化 method、path、body 与 `Idempotency-Key`；`intentHash` 计算最终不可变命令意图。两者、首次生成的 `expiresAt` 和原 `commandId` 一并保存。幂等判定顺序固定为：先完成当前身份、租户、节点和权限版本校验；再按 `(tenantId, idempotencyKey)` 查收据；命中 `KEY_GUARD_ONLY` 返回 410/`IDEMPOTENCY_KEY_EXPIRED`；收据正文存在但 `requestFingerprint` 不同返回 409/`IDEMPOTENCY_REQUEST_MISMATCH`；指纹相同但 `intentHash` 不同返回 409/`IDEMPOTENCY_INTENT_MISMATCH`；两者都相同才返回原 `commandId` 并置 `idempotencyReplay=true`。这样重试判定不会在附录之间形成两套“摘要”语义。HTTP 幂等收据保留期必须覆盖客户端最大重试窗口和 14 天交付重投窗口；破坏性操作的 key guard 至少覆盖节点 tombstone 窗口。收据正文在 `retainedUntil` 前不得清理，正文清理后保留紧凑 key guard 到 `guardUntil`，期间不能静默创建新 commandId；只有完成明确的 key guard 清理策略后才允许复用 key，并返回 `idempotencyReplay=false`。节点 tombstone 仍按 `commandId + intentHash` 拒绝不一致重放；对 `backup.restore`、`disk.format` 等非幂等或破坏性操作，节点再按 `(operation, intentHash)` 保留效果去重窗口。FI-CMD 覆盖收据正文、key guard 和节点 tombstone 分别存在或清理的四象限。
 
@@ -678,9 +708,9 @@ leaseUntil <= min(
 
 ### 15.3.4 R4 节点写入控制与跨入口互斥
 
-首版在节点实际 Go service 变更入口强制 `managementMode ∈ {CLOUD_MANAGED, LOCAL_MAINTENANCE, POLICY_SCHEDULER}` 与持久 `fenceVersion`，而不是只在 connector 或 React 层隐藏入口。覆盖 core API、agent socket、MCP、1pctl、Cron、证书续期、应用同步和维护任务。`POLICY_SCHEDULER` 仅允许已签名且已确认的策略版本、到期时间和资源锁，不允许临时人工参数；`LOCAL_MAINTENANCE` 是本地交互恢复主体，进入后暂停云端新写入。维护进入、超时和离线回切由节点本地 watchdog 根据持久 deadline 执行，恢复联网后再由云端核对 fence 和水位。本机 root 能绕过 fence 属于运维信任边界，应记录为已知限制并通过漂移检测发现，不能宣称由协议防住。
+首版在节点实际 Go service 变更入口强制维护状态、管理归属和执行主体共同准入，而不是只在 connector 或 React 层隐藏入口。`managementMode ∈ {CLOUD_MANAGED, LOCAL_MAINTENANCE}` 表示节点当前管理归属，`maintenanceState ∈ {NORMAL, QUIESCING, MAINTENANCE}` 表示维护生命周期，`executionPrincipal ∈ {CLOUD_OPERATOR, LOCAL_OPERATOR, POLICY_SCHEDULER, RECOVERY_AUTOMATION}` 表示本次操作由谁发起。覆盖 core API、agent socket、MCP、1pctl、Cron、证书续期、应用同步和维护任务。策略调度在 `CLOUD_MANAGED` 节点上可以作为 `POLICY_SCHEDULER` 执行主体，但必须使用已签名且已确认的策略版本、到期时间和资源锁，不允许临时人工参数；`LOCAL_MAINTENANCE` 是本地交互恢复主体，进入后暂停云端新写入。维护进入、超时和离线回切由节点本地 watchdog 根据持久 deadline 执行，恢复联网后再由云端核对 fence 和水位。本机 root 能绕过 fence 属于运维信任边界，应记录为已知限制并通过漂移检测发现，不能宣称由协议防住。
 
-命令创建时保存当时的 `fenceVersion`；`beginDispatch` 和本地 Go 入口必须同时核对节点当前 fence，维护期间冻结旧 fence 的新写入，回切后重新授权或进入核对。进入 `LOCAL_MAINTENANCE` 前排空或标记在途任务、提升 fence、记录操作者和原因；维护超时自动回切并重新核对水位。资源锁矩阵至少覆盖：网站配置与证书续期的 nginx 配置锁、数据库恢复与容器更新的 volume 锁、快照恢复与 Cron 备份的节点/数据锁、升级与所有破坏性操作的节点锁。`commandId` 去重只解决同一命令重复，不能替代不同入口对同一资源的互斥。AC-LIFE 增加云端与 Cron、证书与网站配置、恢复与备份三组并发用例。
+命令创建时保存当时的 `fenceVersion`；`beginDispatch` 和本地 Go 入口必须同时核对节点当前 fence，维护期间冻结旧 fence 的新写入，回切后重新授权或进入核对。进入 `LOCAL_MAINTENANCE` 前排空或标记在途任务、提升 fence、记录操作者和原因；维护超时自动回切并重新核对水位。资源锁矩阵至少覆盖：网站配置与证书续期的 nginx 配置锁、数据库恢复与容器更新的 volume 锁、快照恢复与 Cron 备份的节点/数据锁、升级与所有破坏性操作的节点锁。`commandId` 去重只解决同一命令重复，不能替代不同入口对同一资源的互斥。资源锁过期或旧进程退出不自动证明副作用已经停止，释放锁前必须有受管执行身份、fence 或现场核验。AC-LIFE 增加云端与 Cron、证书与网站配置、恢复与备份三组并发用例，`FI-VERSION` 验证版本作用域和执行主体。
 
 ### 15.3.5 R5–R6 容量实验与 Cloudflare 硬约束
 
@@ -747,7 +777,7 @@ CAP-01 以单租户 D1 和每节点 AgentConn 为主要容量风险。平台限�
 
 ### 15.3.7 R10–R12 追踪与兼容边界
 
-需求矩阵包含 `REQ11 容量与恢复余量`，覆盖 CAP-01、CAP-02、CAP-03、CAP-04、D1/DO/Queue 水位、归档与恢复；包含 `REQ12 链路可达性与延迟`，覆盖 NET、国内/海外路径、API/Relay/R2/包源切换。每个 AC、FI、CAP 和 NET 项必须在需求矩阵中有至少一个 REQ，反向也必须有验收证据。协议兼容包含 `minSupportedProtocol`、最低安全版本、最大允许离线窗口和不兼容节点的最小恢复/签名升级路径；不能因旧节点无法接收普通升级命令而形成升级死锁。
+需求矩阵包含 `REQ11 容量与恢复余量`，覆盖 CAP-01、CAP-02、CAP-03、CAP-04、D1/DO/Queue 水位、归档与恢复；包含 `REQ12 链路可达性与延迟`，覆盖 NET、国内/海外路径、API/Relay/R2/包源切换。区域链路按 `NET-CN` 和 `NET-GLOBAL` 分别记录 `wssHandshakeSuccessRate`、`connectedDuration`、`heartbeatRtt`、`commandDispatchRtt`、`resultReturnRtt`、`reconnectDuration`、`regionFailoverDuration`、旧 epoch 拒绝率以及 `r2TransferSuccessRate`，并按主/备 Relay 分组。Relay ACK 与命令业务完成必须分别计量。每个 AC、FI、CAP 和 NET 项必须在需求矩阵中有至少一个 REQ，反向也必须有验收证据。协议兼容包含 `minSupportedProtocol`、最低安全版本、最大允许离线窗口和不兼容节点的最小恢复/签名升级路径；不能因旧节点无法接收普通升级命令而形成升级死锁。
 
 实施门禁、参数冻结和验收注册表共同构成当前交付基线。任何契约变更必须同步更新附录 A/C、机器可读 fixture、验收 ID 和对应检查；未通过真实代码、Cloudflare 配置、真实节点或容量实验的内容保持 `PLANNED`、`待 PoC` 或 `IMPLEMENTED_UNVERIFIED`，不因文档存在而自动升级状态。
 
@@ -780,6 +810,7 @@ CAP-01 以单租户 D1 和每节点 AgentConn 为主要容量风险。平台限�
 | 租户归属、成员权限、节点登记、命令意图、审计 | 租户 D1，控制 API 维护版本化状态 |
 | 当前节点连接、连接代次、投递游标、待写回事件 | AgentConn DO SQLite，按节点串行推进 |
 | 终端归属、角色票据、租约、撤销版本、连接代次 | TerminalRelay DO SQLite，按终端协调 |
+| 区域设备连接、心跳、重连和帧转发 | CN/Global Relay 短期连接状态；不作为业务事实来源 |
 | 操作是否已接收或开始、进程与本地执行结果 | 节点执行层 SQLite journal、原 Go 本地任务与实际系统状态 |
 | 备份、安装包、导出、批量日志 | R2 对象与 D1 元数据 |
 | 异步通知 | Queues，消息携带事件 ID 和实体 ID |
@@ -794,17 +825,17 @@ DO 通过 Worker 或其他 DO 的 binding 访问。入口 Worker 负责公网认
 
 建议长期节点密钥只参与挑战签名或短期凭证交换。初版优先评估 Ed25519，落地前验证目标 Go 版本、Workers Web Crypto、兼容日期、密钥导入格式与签名规范的互操作测试，再冻结算法标识。每次建链先取得有效期 5 分钟的连接凭证，绑定 node、tenant、keyVersion、协议版本和用途。已连接 AgentConn 另外维持上限 90 秒的节点授权租约，建议每 30 秒经 TenantData Worker 重验节点状态和 credentialVersion。吊销节点提高版本并持久写 outbox，主动停止投递、断开已有 AgentConn 和关联终端，同时拒绝后续建链与续租。主动通知丢失时，现有授权到期后停用连接。普通 ping 不续授权。轮换采用旧凭证批准新公钥、云端确认、新旧短期重叠、撤销旧版本的流程。私钥仅在 agent 的受限文件中保存。API 返回与日志均省略 ticket、私钥、完整令牌和预签名 URL。[Workers Web Crypto](https://developers.cloudflare.com/workers/runtime-apis/web-crypto/)
 
-国内接入优先采用 L4 或 CONNECT 转发，保持 agent 到 Cloudflare 的 TLS 会话。若代理终止 TLS，再连接 Cloudflare，则继续以应用层节点挑战和短期连接凭证验证 node。代理身份、来源 IP 与节点身份分别记录。[RFC 9110 CONNECT](https://www.rfc-editor.org/rfc/rfc9110.html#section-9.3.6)
+节点注册结果包含服务端分配的 `regionId`、`primaryRelay`、`secondaryRelay` 和 `regionPolicy`。中国大陆与海外设备分别进入对应区域 Relay 集群，Relay 再通过受认证的 mTLS 隧道连接 Control Gateway。Relay 的证书只证明接入层身份，设备仍需使用公钥挑战、短期连接凭证和节点代次完成独立认证。Relay、来源网络和节点身份分别记录。
 
-入站 mTLS 可作为节点身份的附加选择。Workers 的 mTLS binding 用于出站呈现客户端证书。入站证书验证应配置 zone-level mTLS 或 Access mTLS，并读取可信 `request.cf.tlsClientAuth`，同时核验各产品的独立套餐与证书额度。[Workers mTLS](https://developers.cloudflare.com/workers/runtime-apis/bindings/mtls/)、[入站证书信息](https://developers.cloudflare.com/learning-paths/mtls/mtls-workers/)
+区域 Relay 的 TLS 终止、mTLS 隧道、证书轮换、连接限流、健康探针和跨境链路属于 P0/P1 PoC。Cloudflare China Network、其他大陆边缘入口和自建 Relay 的具体组合需核对套餐、ICP、产品可用性与数据处理边界。若代理终止设备 TLS，再连接 Cloudflare，仍必须执行应用层节点挑战和短期连接凭证验证。[Workers mTLS](https://developers.cloudflare.com/workers/runtime-apis/bindings/mtls/)、[入站证书信息](https://developers.cloudflare.com/learning-paths/mtls/mtls-workers/)
 
 ## A.3. 控制协议与 agent 本地连接代次隔离
 
-控制通道使用 TLS/WSS 上的版本化消息封装。握手交换 protocolMin、protocolMax、connectorBuild、adapterVersion、executionMode、coreVersion、agentVersion、journalSchema、capabilities、nodeIncarnation 与已持久化 highestEpoch。Worker 从已验证节点身份确定租户与节点，再访问固定 AgentConn DO。能力按整个节点执行组合验证；客户端声明的租户、角色和 HTTP 身份头不能替代授权。
+控制通道使用 TLS/WSS 上的版本化消息封装。设备先连接服务端分配的区域 Relay，Relay 通过 mTLS 隧道把握手帧转发到 Control Gateway。握手交换 protocolMin、protocolMax、connectorBuild、adapterVersion、executionMode、coreVersion、agentVersion、journalSchema、capabilities、nodeIncarnation 与已持久化 highestEpoch。Worker 从已验证节点身份确定租户与节点，再访问固定 AgentConn DO。能力按整个节点执行组合验证；客户端声明的租户、角色和 HTTP 身份头不能替代授权。Relay 的 mTLS 只认证接入层，不改变节点公钥、tenant、nodeId、incarnation 和 epoch 的校验顺序。
 
 AgentConn 在本地事务中创建递增 epoch。agent 验证云端身份、nodeIncarnation 和协议版本后，将新 epoch 写入本地 journal 并持久化，再发送 ready。DO 仅在 ready 与当前待确认的最高代次一致时激活新连接并投递业务消息，较旧的 ready 被拒绝。agent 本地使用单实例锁和串行 dispatcher，在入队以及真正启动操作前检查 incarnation 与 epoch，拒绝旧代次的新命令。新连接建立后，旧连接上的已运行进程按 commandId 继续核对，连接代次变化不会自动终止已经发生的业务动作。
 
-agent 重启读取已持久化 epoch。云端快照恢复若回退了 epoch，agent 拒绝较小值，重新建链时 AgentConn 在可信节点身份下将代次提高到双方已记录值之上。已知 journal 丢失、磁盘克隆或旧快照恢复必须通过运维恢复流程重新注册，生成新密钥与 incarnation，撤销旧身份并核对未决任务。完整复制私钥和 journal 的克隆无法仅凭这套 journal 自动可靠识别，连接代次冲突只能作为异常线索。持久 journal 丢失后不能沿用原有执行去重承诺。
+agent 重启读取已持久化 epoch。云端快照恢复若回退了 epoch，agent 拒绝较小值，重新建链时 AgentConn 在可信节点身份下将代次提高到双方已记录值之上。区域 Relay 切换或跨入口重连必须生成新的 `connectionEpoch`，旧连接迟到帧按 epoch 和 incarnation 丢弃或进入核对。已知 journal 丢失、磁盘克隆或旧快照恢复必须通过运维恢复流程重新注册，生成新密钥与 incarnation，撤销旧身份并核对未决任务。完整复制私钥和 journal 的克隆无法仅凭这套 journal 自动可靠识别，连接代次冲突只能作为异常线索。持久 journal 丢失后不能沿用原有执行去重承诺。
 
 ```json
 {
@@ -814,6 +845,11 @@ agent 重启读取已持久化 epoch。云端快照恢复若回退了 epoch，ag
   "tenantId": "tenant_example",
   "nodeId": "node_example",
   "nodeIncarnation": "incarnation_example",
+  "actor": {
+    "principalId": "user_example",
+    "authorizationVersion": "27"
+  },
+  "fenceVersion": "9",
   "connectionEpoch": "42",
   "sequence": "108",
   "commandId": "cmd_01J_SAMPLE",
@@ -821,6 +857,17 @@ agent 重启读取已持久化 epoch。云端快照恢复若回退了 epoch，ag
   "expiresAt": 1794471300000,
   "operation": "service.restart",
   "resourceVersion": "17",
+  "resolvedResource": {
+    "kind": "service",
+    "stableId": "nginx",
+    "bindingVersion": "4"
+  },
+  "startGrant": {
+    "grantId": "grant_01J_SAMPLE",
+    "nonce": "nonce_example",
+    "issuedAt": 1794470400000,
+    "expiresAt": 1794470460000
+  },
   "intentHash": "sha256-example",
   "payload": {
     "service": "nginx"
@@ -829,7 +876,7 @@ agent 重启读取已持久化 epoch。云端快照恢复若回退了 epoch，ag
 }
 ```
 
-intentHash 覆盖 tenantId、nodeId、nodeIncarnation、operation、规范化业务参数、resourceVersion 和不可变业务过期策略，包括绝对 expiresAt。协议固定 JSON 字段排序、数值和 Unicode 编码规范，并用跨 Go 与 TypeScript 测试向量验证。传输 connectionEpoch、messageId、重传次数和 traceId 排除在意图摘要之外。重发保持 commandId、intentHash 与完整业务意图不变，跨节点、变更操作或延长业务有效期需要新命令。建议 sequence 与 epoch 使用十进制字符串传递，避免 JavaScript 大整数精度问题。初版控制消息建议限制在 64 KiB，超出部分通过 R2 对象引用传递。TLS 保护通道完整性，应用级防重放集中在注册、建链、角色票据、命令去重与代次校验上。
+intentHash 覆盖 tenantId、nodeId、nodeIncarnation、operation、规范化业务参数、resolvedResource、resourceVersion 和不可变业务过期策略，包括绝对 expiresAt。actor、authorizationVersion、fenceVersion、incarnation、nonce 和 startGrant 共同约束本次启动准入，startGrant 不能在接收时重新获得完整 TTL。协议固定 JSON 字段排序、数值和 Unicode 编码规范，并用跨 Go 与 TypeScript 测试向量验证。传输 connectionEpoch、messageId、重传次数和 traceId 排除在意图摘要之外。重发保持 commandId、intentHash 与完整业务意图不变，跨节点、变更操作或延长业务有效期需要新命令。在线排队等待资源锁期间若授权版本、fence 或资源绑定变化，必须重新申请 startGrant，不能继续启动。建议 sequence 与 epoch 使用十进制字符串传递，避免 JavaScript 大整数精度问题。初版控制消息建议限制在 64 KiB，超出部分通过 R2 对象引用传递。TLS 保护通道完整性，应用级防重放集中在注册、建链、角色票据、命令去重与代次校验上。
 
 ## A.4. 数据模型与对外 API
 
@@ -838,9 +885,10 @@ intentHash 覆盖 tenantId、nodeId、nodeIncarnation、operation、规范化业
 | 表或集合 | 主要字段与约束 |
 |---|---|
 | tenant_members | tenantId、userId、role、authorizationVersion，成员唯一键 |
-| nodes | tenantId、nodeId、incarnation、credentialVersion、publicKeyFingerprint、status、capabilities、connectorBuild、adapterVersion、executionMode、coreVersion、agentVersion、managementMode、fenceVersion、revision |
+| nodes | tenantId、nodeId、incarnation、credentialVersion、publicKeyFingerprint、status、capabilities、connectorBuild、adapterVersion、executionMode、coreVersion、agentVersion、managementMode、maintenanceState、executionPrincipal、fenceVersion、revision |
 | enrollments | enrollmentId、ticketHash、requestId、publicKeyHash、expiresAt、consumedAt、nodeId |
-| commands | commandId、nodeId、nodeIncarnation、fenceVersion、idempotencyKey、requestFingerprint、intentHash、operation、resourceVersion、state、lastKnownExecutionState、cancelIntent、reconcileState、sideEffectExtent、evidenceRefs、cancelIneffective、revision、expiresAt、resultRef |
+| commands | commandId、nodeId、nodeIncarnation、actorId、authorizationVersion、fenceVersion、idempotencyKey、requestFingerprint、intentHash、operation、resolvedResource、resourceVersion、state、lastKnownExecutionState、cancelIntent、reconcileState、sideEffectExtent、evidenceRefs、cancelIneffective、revision、expiresAt、resultRef |
+| command_start_grants | grantId、commandId、actorId、authorizationVersion、fenceVersion、nodeIncarnation、resolvedResource、resourceVersion、intentHash、nonce、issuedAt、expiresAt、consumedAt、status；一次性消费并受条件版本校验 |
 | idempotency_receipts | tenantId、idempotencyKey、requestFingerprint、intentHash、commandId、expiresAt、retainedUntil、guardUntil、replayCount、status；正文可清理但 guardUntil 前禁止复用同 key |
 | outbox | eventId、entityId、entityRevision、kind、availableAt、attempts、claimToken、claimUntil、publishedAt、lastError；C.1 使用 `last_error` |
 | command_events | eventId 唯一、commandId、nodeIncarnation、agentSequence、contentHash、eventJson、applyState、appliedRevision、receivedAt；事件不另设 `state` 或 `evidenceHash` 列，状态从 `eventJson` 解析并按合并结果写入命令，内容摘要统一使用 `contentHash` |
@@ -885,6 +933,8 @@ AgentConn SQLite 保存 activeEpoch、activeConnection、dispatchCursor、pendin
 云端持久化命令意图后可以显示 QUEUED。AgentConn 首次发送前调用 TenantData.beginDispatch，原子校验命令仍可投递、有效期、取消状态、命令 `fenceVersion` 与节点当前写入代次，将租户 D1 状态推进 DISPATCHED 并记录 dispatchAttempt。取得这一持久准入后，再保存 DO 本地投递记录并发送。D1 不可用时暂停新的首次投递，已准入命令按原 commandId 对账。QUEUED 的取消与过期操作通过同一状态 CAS 竞争，防止 DO 已发送而云端仍按未投递结束任务。agent 在 journal 事务中写入 RECEIVED 并确保持久化后才回复 accepted。重复 commandId 先核对完整 intentHash，然后返回已记录状态。相同 ID 携带不同 intentHash 时拒绝并产生审计。agent 使用状态 CAS 与资源锁保证同一命令只有一个本地 dispatcher 启动，取得资源锁后再次核对当前资源版本、节点 incarnation、epoch、授权与业务有效期，前置条件冲突时停止启动并返回证据。
 
 准入前的权限或参数失败直接返回 4xx。命令已持久化后，节点只有在确认未启动且业务前置条件不满足时，才能持久回传 REJECTED，附错误码、拒绝原因和未执行证据；可从 DISPATCHED、RECEIVED 或 RECONCILING 合并到该终态。旧 epoch、乱序帧等传输拒绝仅结束该投递尝试，不能自动终结仍可在当前有效连接执行的业务命令。执行适配器与实际 Go 启动入口共同落实校验、锁和操作标记。
+
+执行器启动前必须取得一次性 `startGrant`。TenantData 使用 primary 或 `first-primary` 会话重新核对 actor、authorizationVersion、nodeIncarnation、fenceVersion、resolvedResource、resourceVersion、commandId、intentHash、nonce 和绝对启动期限，再以条件写入记录 grant 消费。startGrant 消费失败、过期、重复或与当前资源/授权版本不一致时，执行器不得启动副作用。在线等待资源锁期间发生撤权、维护切换、fence 提升或资源绑定变化时，原 grant 立即失效并回到对账路径。该闭环由 `AC-CONTRACT` 验收。
 
 ```mermaid
 stateDiagram-v2
@@ -936,7 +986,7 @@ stateDiagram-v2
 
 执行器将操作分为只读、可验证的目标状态变更、带外部幂等键的操作、非幂等或破坏性操作。每类声明恢复策略、可核对证据、取消边界和补偿能力。创建目录可核对目标状态，服务重启可核对运行状态与进程证据，数据库恢复或磁盘操作可能需要检查专属 checkpoint。进程身份同时记录启动时间或操作标记，避免仅凭复用的 PID 判断。
 
-系统副作用与 journal 提交无法组成同一个数据库事务。若 agent 在副作用发生后、结果落盘前退出，恢复流程先查询现场和 checkpoint。无法确认的破坏性动作进入 UNCERTAIN 或 REVIEW_REQUIRED，保留原 commandId 与证据，等待明确处置。人工批准再次尝试时创建关联原任务的新 commandId，并重新检查资源前置条件。
+系统副作用与 journal 提交无法组成同一个数据库事务。journal 的 SQLite 初始化必须显式冻结 WAL、连接池每个连接的 `busy_timeout` 和 `synchronous=FULL` 或经过实测等价的掉电耐久等级。应用崩溃、进程 kill、系统重启和目标存储掉电分别测试，临时文件替换还要同步文件和父目录。若 agent 在副作用发生后、结果落盘前退出，恢复流程先查询现场和 checkpoint。无法确认的破坏性动作进入 UNCERTAIN 或 REVIEW_REQUIRED，保留原 commandId 与证据，等待明确处置。人工批准再次尝试时创建关联原任务的新 commandId，并重新检查资源前置条件。该门禁由 `FI-DURABILITY` 覆盖。
 
 已有投递尝试但尚无可靠接收确认的命令到期后进入 RECONCILING，通过 agent journal 与现场核对是否执行。只有无投递历史，或 agent 提供可信的未启动证据，才能转为 EXPIRED。开始执行后的任务采用独立执行期限，业务入场期限到达不能据此把已执行任务标成未执行。
 
@@ -1004,6 +1054,8 @@ AgentConn 对已接受的 pendingCommand 在 DO storage 中持久化，节点恢
 
 如果状态 CAS 影响零行，事件保持待处理，数据 Worker 重读当前状态与 revision。与已有状态及证据一致的重复或晚到进度可记录 CONSISTENT_NOOP，仍需写入所依据的 appliedRevision。存在矛盾的最终结果记录 CONFLICT 并触发对账，其余合法转换重新以最新 revision 尝试。只有 APPLIED 或证据一致的 CONSISTENT_NOOP 才发送 result.committed，失败与冲突路径保留事件并继续核对。agent 收到这一确认后方可进入结果保留倒计时。所有结果回写经 TenantData Worker，DO alarm 重试与后台扫描同时覆盖未应用事件，防止事件已去重而结果永远丢失。
 
+人工对 CONFLICT 或 REVIEW_REQUIRED 作出结论后，必须先写入 `evidenceHandoff`，包含处置人、证据摘要、原始事件位置、保留责任、允许回收时间和释放条件。该确认表示证据已可靠归档并由指定组件继续承担保留责任，不改变原命令的业务结论。只有完成 handoff 且满足保留条件，DO pendingResult、节点 journal 临时回执和 D1 事件才可按策略回收，原始证据引用必须继续可查询。该闭环由 `FI-CONFLICT` 注入并验证。
+
 多 D1、多 DO、Queues 和 R2 之间采用显式状态机及补偿。终端预留失败会过期回收，未完成 R2 multipart 会按生命周期清理，已发出的系统操作仅按操作类型声明的补偿步骤处理。Workflows 负责多阶段编排、事件等待和超时，使用 waitForEvent/sleep 等待节点结果，D1 仍为长期任务记录权威。完成实例保留策略显式配置，不依赖默认保留期满足业务恢复要求。step 重试复用既有 commandId，并先查询执行状态。每个步骤分别声明安全重试条件与结果未知时的停点。[Workflows API](https://developers.cloudflare.com/workflows/build/workers-api/)
 
 ## A.7. Relay 角色票据与独立终端连接
@@ -1063,7 +1115,7 @@ agent 保存最近 1 MiB 或 30 秒的终端输出用于短暂断线恢复，先
 
 建议增加以下应用容量边界，并在压测中调整。单条结果内联正文上限 64 KiB，较大输出写 R2 或 agent 日志对象；每节点待投递上限为 1,000 条或 8 MiB；AgentConn 未确认结果持久缓存上限 64 MiB，高水位 48 MiB 时暂停新普通任务。这些是应用预算，不是平台上限。Cloudflare DO、WebSocket、SQL 和出站连接限制集中见 [`docs/platform-constraints.md`](platform-constraints.md)，结果按平台边界分块保存。agent 为 journal 维护至少 50 MiB 的应急磁盘余量，接近阈值时拒绝新副作用任务并继续保存已有任务的最终状态。容量不足不能通过删除未确认结果或未过期 tombstone 来释放空间；正文、恢复元数据与去重 tombstone 分开设置保留策略。
 
-控制连接建议由 agent 每 30 秒发送 WebSocket 协议 ping，Cloudflare 自动应答且不唤醒 DO。固定字符串应用 ping/pong 可用 `setWebSocketAutoResponse`。业务健康建议每 60 秒汇报一次摘要，用户打开监控页时按订阅短时提高频率。在线状态区分 transportConnected、agentHealthy、lastSeenAt 和 stale，平台自动 pong 只代表连接通路可用。[DO 心跳与休眠](https://developers.cloudflare.com/durable-objects/best-practices/websockets/)、[自动应答 API](https://developers.cloudflare.com/durable-objects/api/state/)
+控制连接建议由 agent 每 30 秒发送 WebSocket 协议 ping，Cloudflare 自动应答且不唤醒 DO。固定字符串应用 ping/pong 可用 `setWebSocketAutoResponse`。业务健康建议每 60 秒汇报一次摘要，用户打开监控页时按订阅短时提高频率。在线状态区分 transportConnected、agentHealthy、lastSeenAt 和 stale，平台自动 pong 只代表连接通路可用。区域 Relay 还需分别记录主入口、备用入口、Relay 健康状态、跨 Relay 切换次数和 `connectionEpoch`，不能把 Relay 在线解释为节点业务已就绪。[DO 心跳与休眠](https://developers.cloudflare.com/durable-objects/best-practices/websockets/)、[自动应答 API](https://developers.cloudflare.com/durable-objects/api/state/)
 
 重连采用指数退避与 full jitter，起点 1 秒、上限 60 秒，稳定后重置。DO 不保持等待节点完成的长生命周期 promise，不用周期 setInterval 保活，Relay 到期检查使用 alarm。休眠与连接重建均需恢复固定身份、代次、租约和待处理事件。[DO 生命周期](https://developers.cloudflare.com/durable-objects/concepts/durable-object-lifecycle/)
 
@@ -1342,7 +1394,7 @@ erDiagram
 
 ## C.1 核心持久约束示例
 
-`resource_version` 是 API `resourceVersion` 的不透明十进制字符串投影，不能按 JavaScript 数值解析；命令创建、节点准入和本地启动均须按原值做前置条件比较。`cancel_ineffective` 是取消未能消除已发生副作用的唯一持久表示，`cancel_intent` 只记录取消请求生命周期。
+`resource_version` 是 API `resourceVersion` 的不透明十进制字符串投影，不能按 JavaScript 数值解析。资源版本按作用域拆分为 `installationRevision`、`bindingRevision`、`configurationRevision` 和 `observationRevision`，operation registry 声明本操作依赖的作用域。命令创建、节点准入和本地启动只比较相关版本，CPU 采样、运行观测或无关证书轮换不能使不依赖它们的命令失效。完整资源引用还保存稳定资源身份、nodeIncarnation、相关 revision、快照时间和缺口修复游标。`cancel_ineffective` 是取消未能消除已发生副作用的唯一持久表示，`cancel_intent` 只记录取消请求生命周期。
 
 ```sql
 CREATE TABLE nodes (
@@ -1351,6 +1403,8 @@ CREATE TABLE nodes (
     incarnation TEXT NOT NULL,
     credential_version INTEGER NOT NULL DEFAULT 1,
     management_mode TEXT NOT NULL DEFAULT 'CLOUD_MANAGED',
+    maintenance_state TEXT NOT NULL DEFAULT 'NORMAL',
+    execution_principal TEXT NOT NULL DEFAULT 'CLOUD_OPERATOR',
     fence_version INTEGER NOT NULL DEFAULT 1,
     revision INTEGER NOT NULL DEFAULT 1,
     public_key_fingerprint TEXT,
@@ -1363,7 +1417,9 @@ CREATE TABLE nodes (
     agent_version TEXT,
     PRIMARY KEY (tenant_id, node_id),
     CHECK (credential_version > 0 AND fence_version > 0 AND revision > 0),
-    CHECK (management_mode IN ('CLOUD_MANAGED', 'LOCAL_MAINTENANCE', 'POLICY_SCHEDULER'))
+    CHECK (management_mode IN ('CLOUD_MANAGED', 'LOCAL_MAINTENANCE')),
+    CHECK (maintenance_state IN ('NORMAL', 'QUIESCING', 'MAINTENANCE')),
+    CHECK (execution_principal IN ('CLOUD_OPERATOR', 'LOCAL_OPERATOR', 'POLICY_SCHEDULER', 'RECOVERY_AUTOMATION'))
 );
 
 CREATE TABLE commands (
@@ -1371,11 +1427,14 @@ CREATE TABLE commands (
     command_id TEXT NOT NULL,
     node_id TEXT NOT NULL,
     node_incarnation TEXT NOT NULL,
+    actor_id TEXT NOT NULL,
+    authorization_version INTEGER NOT NULL,
     fence_version INTEGER NOT NULL,
     idempotency_key TEXT NOT NULL,
     request_fingerprint TEXT NOT NULL,
     intent_hash TEXT NOT NULL,
     operation TEXT NOT NULL,
+    resolved_resource_json TEXT NOT NULL DEFAULT '{}',
     resource_version TEXT NOT NULL,
     payload_json TEXT NOT NULL,
     state TEXT NOT NULL,
@@ -1393,8 +1452,8 @@ CREATE TABLE commands (
     PRIMARY KEY (tenant_id, command_id),
     FOREIGN KEY (tenant_id, node_id)
         REFERENCES nodes (tenant_id, node_id),
-    CHECK (fence_version > 0 AND revision > 0 AND expires_at > created_at),
-    CHECK (side_effect_extent IN ('NONE', 'PARTIAL', 'FULL')),
+    CHECK (authorization_version > 0 AND fence_version > 0 AND revision > 0 AND expires_at > created_at),
+    CHECK (side_effect_extent IN ('NONE', 'PARTIAL', 'FULL', 'UNKNOWN')),
     CHECK (last_known_execution_state IN ('NOT_STARTED', 'RECEIVED', 'RUNNING', 'SUCCEEDED', 'FAILED', 'CANCELLED', 'UNKNOWN')),
     CHECK (cancel_intent IN ('NONE', 'REQUESTED', 'ACCEPTED', 'REJECTED')),
     CHECK (reconcile_state IN ('NOT_REQUIRED', 'PENDING', 'IN_PROGRESS', 'RESOLVED', 'MANUAL')),
@@ -1402,6 +1461,32 @@ CREATE TABLE commands (
 );
 CREATE INDEX commands_by_node_state
     ON commands (tenant_id, node_id, state, created_at, command_id);
+
+CREATE TABLE command_start_grants (
+    tenant_id TEXT NOT NULL,
+    grant_id TEXT NOT NULL,
+    command_id TEXT NOT NULL,
+    actor_id TEXT NOT NULL,
+    authorization_version INTEGER NOT NULL,
+    fence_version INTEGER NOT NULL,
+    node_incarnation TEXT NOT NULL,
+    resolved_resource_json TEXT NOT NULL,
+    resource_version TEXT NOT NULL,
+    intent_hash TEXT NOT NULL,
+    nonce TEXT NOT NULL,
+    issued_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL,
+    consumed_at INTEGER,
+    status TEXT NOT NULL DEFAULT 'ISSUED',
+    PRIMARY KEY (tenant_id, grant_id),
+    UNIQUE (tenant_id, command_id, nonce),
+    FOREIGN KEY (tenant_id, command_id)
+        REFERENCES commands (tenant_id, command_id),
+    CHECK (authorization_version > 0 AND fence_version > 0 AND expires_at > issued_at),
+    CHECK (status IN ('ISSUED', 'CONSUMED', 'REJECTED', 'EXPIRED'))
+);
+CREATE INDEX command_start_grants_by_command
+    ON command_start_grants (tenant_id, command_id, status, expires_at);
 
 CREATE TABLE idempotency_receipts (
     tenant_id TEXT NOT NULL,
@@ -1540,7 +1625,7 @@ REQ 是产品追踪编号，不替代附录 B 的路由组和逐端点台账。�
 | REQ09 VM、AI 与 MCP | 按公开 provider 与实际硬件验收；私有缺口显式处置，MCP 不绕过授权 | §13.2、B.5.6–B.7 / P4 | AC-MCP、FI-AUTH、CAP-01、NET-MCP |
 | REQ10 安装与恢复 | 保留 core 的安装、升级、回滚、快照、数据迁移和退役闭环 | §12、B.5.5 / P5 | AC-RECOVERY、FI-RECOVERY、CAP-04、NET-R2 |
 | REQ11 容量与恢复余量 | 单租户 10,000 节点、D1/DO/Queue 水位、归档和恢复余量分别有实测门禁 | §15.1、§15.3.5 / P0–P5 | AC-CAP、FI-CAP、CAP-01、CAP-02、CAP-03、CAP-04、NET-CAP |
-| REQ12 链路可达性与延迟 | API、Relay、R2、包源及国内/海外路径按可达性、延迟和失败切换验收 | §9、§15.3.7 / P0–P4 | AC-NET、FI-NET、CAP-02、NET-01、NET-02、NET-03、NET-04 |
+| REQ12 链路可达性与延迟 | API、Relay、R2、包源及国内/海外路径按可达性、延迟和失败切换验收 | §9、§15.3.7 / P0–P4 | AC-NET、FI-NET、CAP-02、NET-01、NET-02、NET-03、NET-04、NET-CN、NET-GLOBAL |
 
 ## D.4 设备状态与 DEV 验收矩阵
 

@@ -7,7 +7,7 @@
 ## Scope and assumptions
 
 - 当前站点范围：`docs/`、`scripts/`、`src/`、`.github/workflows/` 生成并发布 GitHub Pages 静态站点。
-- 目标运行范围：XC React、Cloudflare Workers、TenantData/D1、AgentConn/TerminalRelay DO、Queues、R2、connector、本地 journal 与原 Go core/agent。
+- 目标运行范围：XC React、Cloudflare Workers、Control Gateway、区域 CN/Global Relay、TenantData/D1、AgentConn/TerminalRelay DO、Queues、R2、connector、本地 journal 与原 Go core/agent。
 - 目标部署假设：公网多租户 SaaS；浏览器使用同域会话，节点通过主动 WSS 连接；控制面和节点均需做服务端授权。
 - 数据敏感度假设：节点凭据、终端内容、备份、配置和审计属于高敏感资产；终端输出和日志默认脱敏。
 - 真实代码、真实节点、Cloudflare 账号配置、WAF/Pages Header 和容量测试不在当前仓库证据内。
@@ -21,7 +21,7 @@
 - 静态发布链：Markdown → `scripts/build.mjs` → `dist/` → GitHub Actions → GitHub Pages。
 - 公网控制面：XC React 与入口 Worker，负责会话、租户、权限、命令意图和审计。
 - 状态与异步：TenantData/D1 保存租户权威状态；AgentConn/Relay DO 协调连接、租约和顺序；Queues 只做持久补偿。
-- 节点执行：connector 主动 WSS → operation adapter → 本地 journal → 原 Go core/agent；Go 执行主机特权操作。
+- 节点接入与执行：connector → 区域 Relay → 受认证 mTLS 隧道 → Control Gateway → AgentConn/TerminalRelay DO；再由 connector 进入 operation adapter、本地 journal 和原 Go core/agent。Relay 只承载连接和帧转发，不保存业务事实。
 - 制品与日志：R2 保存备份、安装包、导出和归档；D1 保存索引、摘要和审计。
 
 ### Data flows and trust boundaries
@@ -29,7 +29,8 @@
 - Internet → React/入口 Worker：会话、租户上下文、命令、文件元数据；HTTPS、Cookie/CSRF/Origin、服务端 RBAC 和输入 schema 必须同时生效。
 - 入口 Worker → TenantData/D1：授权后的租户状态、命令意图、审计和 outbox；只允许预定义领域方法，不接受客户端 SQL 或任意 binding。
 - TenantData/Queues → AgentConn/Relay DO：事件、代次、租约和结果引用；按 tenant/node/terminal 绑定，使用 eventId、revision 和幂等收据去重。
-- DO → connector：WSS 控制消息和角色票据；节点证明身份、核验 epoch、绝对租约和 capability 后才接收。
+- 区域 Relay → Control Gateway：设备 WSS 帧和区域接入上下文；使用 Relay mTLS 认证、租户/节点映射、协议校验、epoch/incarnation 和重放防护。Relay 身份不能替代设备身份。
+- DO → connector：经区域 Relay 转发的 WSS 控制消息和角色票据；节点证明身份、核验 epoch、绝对租约和 capability 后才接收。
 - connector → Go/core/agent：本机 Unix socket 或受控适配入口；操作 registry、资源锁、路径边界和本地 journal 约束特权动作。
 - Browser/connector → R2：预签名 multipart 和下载；URL 绑定租户、artifact、动作和有效期，完成后校验 SHA-256。
 - Developer → CI → GitHub Pages：源文档、依赖、构建产物；分支保护、锁文件、构建检查和产物一致性是发布边界。
@@ -40,10 +41,13 @@
 flowchart TD
     User["Browser user"] --> Edge["React and edge gateway"]
     Edge --> Data["TenantData and D1"]
-    Edge --> Relay["AgentConn and Relay DO"]
+    Edge --> ControlDO["AgentConn and Terminal Relay DO"]
     Data --> Queue["Outbox Queues"]
-    Queue --> Relay
-    Relay --> Connector["Node connector"]
+    Queue --> ControlDO
+    Edge --> Gateway["Control Gateway"]
+    Connector["Node connector"] --> RegionalRelay["Regional Relay"]
+    RegionalRelay --> Gateway
+    Gateway --> ControlDO
     Connector --> Go["Go core and agent"]
     Edge --> Objects["R2 objects"]
     Developer["Developer and CI"] --> Pages["Static Pages"]
@@ -85,6 +89,7 @@ flowchart TD
 | Login/session and deep links | Browser HTTPS | Internet → edge → tenant data | Cookie, CSRF, Origin and tenant checks | `docs/technical-plan.md` §10, §13.1 |
 | Command API | React mutation | Edge → D1/DO → node | Idempotency, resourceVersion, capability and operation schema | `docs/technical-plan.md` §8, A.5, C.2 |
 | Enrollment and WSS | Installer/connector | Internet → DO → node | Ticket binding, epoch, lease and replay protection | `docs/technical-plan.md` A.2, A.7, A.8 |
+| Regional Relay and Gateway | Connector WSS / mTLS tunnel | Internet or regional network → Relay → Gateway → DO | Relay certificate rotation, tenant/node derivation, epoch and replay checks, rate limits and backpressure | `docs/technical-plan.md` §4, §9, A.2, A.3 |
 | File upload/download | Browser or connector | Edge → R2 → node | Presigned URL scope, path boundary and SHA-256 | `docs/technical-plan.md` §11, A.10 |
 | Local Go adapters | Unix socket or local service | Connector → host privilege | Shell/path/host-key and resource-lock boundary | `docs/technical-plan.md` §8, §9, B.5.3 |
 | CI and Pages artifact | Git push | Developer → CI → public site | Dependency, source and generated artifact integrity | `.github/workflows/deploy.yml`, `scripts/check.mjs` |
@@ -99,6 +104,7 @@ flowchart TD
 6. A Queue/outbox event is delivered twice or out of order → consumer lacks event/revision CAS → an old result overwrites a newer command state or repeats a destructive action.
 7. A cookie-authenticated request or WSS upgrade arrives from an untrusted Origin → CSRF/Origin checks are missing or applied after upgrade → a victim’s session performs a privileged action.
 8. A secret, ticket, terminal input, or backup URL is logged → logs are exported to a broader audience → infrastructure credentials or customer data leak.
+9. A compromised or misconfigured Relay forwards frames for another tenant or replays an old connection → Gateway trusts Relay metadata without rechecking node identity and epoch → cross-tenant delivery or stale command execution occurs.
 
 ## Threat model table
 
@@ -112,6 +118,7 @@ flowchart TD
 | TM-006 | Queue/event attacker or duplicate delivery | Consumer lacks CAS/idempotency | Replay or reorder command/result event | Duplicate side effect or state corruption | Commands, journal, audit | eventId, revision, intentHash and outbox design in A.5/C.1 | Runtime consumer not implemented | Enforce event uniqueness, CAS merge, command tombstone and conflict review | Metrics for duplicate, conflict and late event rates | medium | high | high |
 | TM-007 | Log reader or compromised exporter | Secrets reach logs | Read tickets, keys, terminal input or URLs | Credential/data disclosure | Secrets, logs, backups | Redaction requirements in §10, A.10, A.12 | No log pipeline evidence | Structured allowlist, redaction tests, restricted retention and access | Secret-pattern scanner and audit access logs | medium | high | high |
 | TM-008 | Developer/dependency attacker | CI token or dependency compromise | Alter generated site or workflow artifact | Public integrity loss, misleading design or supply-chain foothold | Source, Pages artifact | Lockfile, build/check and Pages workflow | Branch/review controls external to repo | Pin actions, protect main, review lockfile changes, verify artifact hash | Workflow audit, dependency alerts, artifact digest | low | medium | medium |
+| TM-009 | Compromised or misconfigured Relay | Relay certificate or routing state compromised; Gateway trusts forwarded tenant/node fields | Forward, replay or mix frames across tenants, nodes or epochs | Cross-tenant command/terminal access or stale action | Commands, tickets, host state | Relay mTLS and epoch/incarnation rules in §4, §9, A.2, A.3 | Relay runtime, rotation and routing evidence absent | Rotate Relay certificates, derive tenant/node from verified device identity, reject old epoch, rate-limit and audit frame routing | Alert on tenant/node mismatch, replay, old-epoch rejects and abnormal failover | medium | critical | high |
 
 ## Criticality calibration
 
@@ -124,9 +131,9 @@ flowchart TD
 
 | Path | Why it matters | Related Threat IDs |
 |---|---|---|
-| `docs/technical-plan.md` §8, §10, A.2, A.5, A.7, A.10 | Defines auth, tickets, command and file contracts | TM-001–TM-007 |
+| `docs/technical-plan.md` §4, §8–§10, A.2, A.3, A.5, A.7, A.10 | Defines Relay/Gateway trust, auth, tickets, command and file contracts | TM-001–TM-009 |
 | `docs/command-state.json` | Machine-readable state transitions and late-event behavior | TM-006 |
-| `docs/acceptance-ids.json` | Ensures security and capacity gates cannot disappear from traceability | TM-001–TM-007 |
+| `docs/acceptance-ids.json` | Ensures security and capacity gates cannot disappear from traceability | TM-001–TM-009 |
 | `scripts/build.mjs` and `scripts/check.mjs` | Generates and validates public artifacts | TM-008 |
 | `.github/workflows/deploy.yml` | Controls dependency install and Pages publication | TM-008 |
 | `docs/operation-ledger.md` | Maps privileged operations to Go entrypoints and recovery evidence | TM-003, TM-006 |

@@ -142,6 +142,7 @@ await writeFile('dist/index.html',html);
 await writeFile('dist/.nojekyll','');
 await copyFile('src/site.css','dist/assets/site.css');
 await copyFile('docs/technical-plan.md','dist/technical-plan.md');
+await copyFile('docs/product-prd.md','dist/product-prd.md');
 await copyFile('docs/operation-ledger.md','dist/operation-ledger.md');
 await copyFile('docs/platform-constraints.md','dist/platform-constraints.md');
 await copyFile('docs/angelfleetprd-threat-model.md','dist/angelfleetprd-threat-model.md');
