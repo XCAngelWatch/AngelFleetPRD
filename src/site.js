@@ -114,18 +114,25 @@ function setupFeatureTree(tree) {
   });
   branches.forEach(branch => branch.addEventListener('toggle', updateToggle));
   function revealTarget() {
-    // :target uses the browser's fragment decoding for both encoded and plain links.
-    const target = tree.querySelector('.feature-branch summary:target');
-    if (!target) return;
-    const branch = target.parentElement;
-    if (branch.hidden) {
+    let id;
+    try { id = decodeURIComponent(location.hash.slice(1)); }
+    catch { return; }
+    const target = document.getElementById(id);
+    const branch = target?.closest('.feature-branch');
+    if (!branch || !tree.contains(branch)) return;
+    const wasHidden = branch.hidden;
+    if (wasHidden) {
       filter.value = '';
       applyFilter();
-      target.scrollIntoView();
     }
     branch.open = true;
+    if (wasHidden) target.scrollIntoView();
   }
   window.addEventListener('hashchange', revealTarget);
+  results.addEventListener('click', event => {
+    const link = event.target.closest('a');
+    if (link?.getAttribute('href')?.startsWith('#') && link.hash === location.hash) revealTarget();
+  });
   revealTarget();
   tools.hidden = false;
 }
