@@ -150,6 +150,90 @@ for (const taskId of taskIds) {
   assert(pageIds.get(development.file).has(anchor),`Missing shareable task anchor: ${taskId}`);
   assert(searchData.some(record => record.page === development.file && record.id === anchor),`Missing searchable task: ${taskId}`);
 }
+
+const migrationPackages = {FOLLOW:7, CORE:8, OPS:9};
+const migrationRoles = ['Go','控制台','测试'];
+const expectedMigrationIds = Object.entries(migrationPackages).flatMap(([group,count]) =>
+  Array.from({length:count}, (_, i) => group + '-' + String(i + 1).padStart(2,'0')));
+const migrationHeadings = [...development.source.matchAll(/^### ((FOLLOW|CORE|OPS)-\d+) [^\r\n]+/gm)];
+assert.deepEqual(migrationHeadings.map(match => match[1]), expectedMigrationIds, 'Expected one ordered heading per migration work package');
+
+function tableCells(markdown) {
+  return markdown.split(/\r?\n/).filter(line => /^\s*\|.*\|\s*$/.test(line))
+    .map(line => line.trim().slice(1,-1).split('|').map(cell => cell.trim()));
+}
+function effortRange(cell, label) {
+  const plain = cell.replace(/\*\*/g,'').replace(/\[([^\]]+)\]\([^)]+\)/g,'$1');
+  const match = /^(\d+)(?:\s*[–-]\s*(\d+))?$/.exec(plain);
+  assert(match, `Invalid person-day estimate for ${label}: ${cell}`);
+  const low = Number(match[1]), high = Number(match[2] ?? match[1]);
+  assert(Number.isSafeInteger(low) && Number.isSafeInteger(high) && low <= high, `Invalid estimate bounds for ${label}: ${cell}`);
+  return [low,high];
+}
+function sumEffort(ranges) {
+  return ranges.reduce(([a,b], [low,high]) => [a + low, b + high], [0,0]);
+}
+const packageEffort = new Map();
+const packageDependencies = new Map();
+for (const heading of migrationHeadings) {
+  const [,id] = heading;
+  const body = development.source.slice(heading.index + heading[0].length).split(/^#{1,3} /m,1)[0];
+  for (const field of ['前置依赖','权限','验收']) {
+    const lines = body.split(/\r?\n/).filter(line => line.startsWith('**' + field + '**'));
+    const value = lines[0]?.slice(field.length + 4).trim();
+    assert(lines.length === 1 && value, `Expected one populated ${field} field for ${id}`);
+    if (field === '前置依赖') {
+      const refs = new Set(value.match(/(?:GA|FOLLOW|CORE|OPS)-\d+/g) ?? []);
+      for (const [,group,first,last] of value.matchAll(/(GA|FOLLOW|CORE|OPS)-(\d+)\s*至\s*\1-(\d+)/g)) {
+        assert(Number(first) <= Number(last), `Reversed dependency range for ${id}`);
+        for (let n = Number(first); n <= Number(last); n++) refs.add(group + '-' + String(n).padStart(2,'0'));
+      }
+      for (const ref of refs) assert(taskIds.includes(ref) || expectedMigrationIds.includes(ref), `Unknown prerequisite for ${id}: ${ref}`);
+      packageDependencies.set(id, refs);
+    }
+  }
+  const roleRows = tableCells(body).filter(([role]) => migrationRoles.includes(role));
+  assert.deepEqual(roleRows.map(([role]) => role).sort(), [...migrationRoles].sort(), `Expected three distinct role assignments for ${id}`);
+  const effort = new Map();
+  for (const row of roleRows) {
+    const [role,deliverable,estimate] = row;
+    assert(row.length === 3 && deliverable, `Expected a deliverable and estimate for ${id} ${role}`);
+    effort.set(role, effortRange(estimate,`${id} ${role}`));
+  }
+  packageEffort.set(id,effort);
+  const anchor = id.toLowerCase();
+  assert(pageIds.get(development.file).has(anchor), `Missing shareable work package anchor: ${id}`);
+  assert(searchData.some(record => record.page === development.file && record.id === anchor), `Missing searchable work package: ${id}`);
+}
+const readyPackages = new Set(taskIds);
+while (readyPackages.size < taskIds.length + packageDependencies.size) {
+  const ready = [...packageDependencies].filter(([id,refs]) => !readyPackages.has(id) && [...refs].every(ref => readyPackages.has(ref)));
+  assert(ready.length, 'Migration work package dependencies contain a cycle');
+  ready.forEach(([id]) => readyPackages.add(id));
+}
+
+const allPlanRows = tableCells(development.source);
+function publishedEffort(labelPattern) {
+  const rows = allPlanRows.filter(([label]) => labelPattern.test(label));
+  assert.equal(rows.length,1,`Expected one effort summary row for ${labelPattern}`);
+  const [label,...cells] = rows[0];
+  assert(cells.length >= 4,`Missing effort summary columns for ${label}`);
+  const totals = cells.slice(0,4).map((cell,i) => effortRange(cell,`${label} ${migrationRoles[i] ?? '合计'}`));
+  assert.deepEqual(totals[3], sumEffort(totals.slice(0,3)), `Role estimates do not add up for ${label}`);
+  return totals;
+}
+const batchTotals = [];
+for (const group of Object.keys(migrationPackages)) {
+  const entries = [...packageEffort].filter(([id]) => id.startsWith(group + '-'));
+  const byRole = migrationRoles.map(role => sumEffort(entries.map(([,effort]) => effort.get(role))));
+  const totals = publishedEffort(new RegExp(group + '-01.*' + group + '-' + String(migrationPackages[group]).padStart(2,'0')));
+  assert.deepEqual(totals.slice(0,3), byRole, `Published ${group} effort must match its work packages`);
+  batchTotals.push(totals);
+}
+batchTotals.push(publishedEffort(/首批剩余.*GA-02.*GA-10/), publishedEffort(/通用写命令.*GA-11/));
+const remainingPlan = publishedEffort(/剩余合计/);
+assert.deepEqual(remainingPlan, remainingPlan.map((_,i) => sumEffort(batchTotals.map(batch => batch[i]))), 'Remaining effort must match all five nonoverlapping work streams');
+
 const pageContents = pages.map(page => page.html).join('\n');
 const publication = markdownSources + pageContents + sampleTexts.join('\n');
 assert(!/\/Volumes\/|\/Users\/|visualize:|page_c8db|chatgpt\.com\/space/.test(publication),'Private source reference was published');

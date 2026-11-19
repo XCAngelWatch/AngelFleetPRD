@@ -1,6 +1,6 @@
 # 技术详细设计
 
-本轮节点接入、采样和逐指标读取见 §5、§7.2。§1–4 的 OpenResty 示例以及 §7.3–7.4 的安装实例、网站备份示例保留历史设计，用于说明命令落盘、授权、取消和结果对账；这些业务目标已移出本轮派工与验收。当前共用写命令保留，独立容器及数据库候选须重新核验。[本轮非 AI 功能迁移清单](technical-plan.md#137-本轮非-ai-功能迁移清单) · [GA-01 联调契约](go-agent-interface-contract.md) · [Go 操作台账](operation-ledger.md)
+本轮节点接入、采样和逐指标读取见 §5、§7.2。§1–4 的 OpenResty 示例以及 §7.3–7.4 的安装实例、网站备份示例保留历史设计，用于说明命令落盘、授权、取消和结果对账。这些业务目标已移出本轮派工与验收。当前共用写命令在 GA-11 实施，独立容器重启在 CORE-04 验收，隔离 MySQL 备份与恢复在 OPS-02 验收。[三批派工总览](go-agent-development-plan.md#三批派工总览) · [本轮非 AI 功能迁移清单](technical-plan.md#137-本轮非-ai-功能迁移清单) · [GA-01 联调契约](go-agent-interface-contract.md) · [Go 操作台账](operation-ledger.md)
 
 # 1. 从服务详情页提交重启
 
@@ -146,7 +146,7 @@ TenantData 在一个租户事务中消费一次性票据、绑定预登记节点
 
 # 6. 联调场景与交付证据
 
-本轮 M1 在真机核对注册凭证消费、连接代次和 CPU/内存各自的采样来源。旧 M2–M4 的 OpenResty、站点备份和恢复用例保留历史证据要求。候选容器与数据库场景另行确定适配入口、故障点和完成判据。[联调场景与实测记录](spaces/implementation-review.md#实测记录)
+本轮 M1 在真机核对注册凭证消费、连接代次和 CPU/内存各自的采样来源。旧 M2–M4 的 OpenResty、站点备份和恢复用例保留历史证据要求。独立容器按原目标 ID 核对重启次数，隔离数据库按恢复后的样本核对结果。两类目标分别留取权限、原始任务与恢复证据。[CORE-04 容器受控写](go-agent-development-plan.md#core-04-容器与编排写入) · [OPS-02 单库备份与隔离恢复](go-agent-development-plan.md#ops-02-mysql-单库备份与隔离恢复) · [联调场景与实测记录](spaces/implementation-review.md#实测记录)
 
 终端与制品另验租约撤销、PTY 关闭和分片摘要。容量测试按 CAP-01 独立运行单租户 10,000 节点、连续 72 小时的混合负载。[验收编号注册表](acceptance-ids.json) · [主方案 §15.1 容量门禁](technical-plan.md#151-单租户容量与证据门禁)
 
@@ -194,7 +194,7 @@ flowchart LR
 
 ## 7.3 控制面意图如何映射到安装实例
 
-历史 OpenResty 的具体字段与调用路径如下。原生容器候选单独确定资源版本和节点本地标记。
+历史 OpenResty 的具体字段与调用路径如下。[CORE-04](go-agent-development-plan.md#core-04-容器与编排写入)使用独立容器的稳定 ID、资源版本和执行标记，在丢回执后核对同一目标。
 
 | 关键字段 | 传递与校验 |
 |---|---|
@@ -222,7 +222,7 @@ flowchart LR
 
 ## 8.1 把接口接到持久化边界
 
-下表的收据、命令准入与结果接收适用于 GA-11 的共用写入链。安装实例、Compose 及网站备份的行保留此前的适配设计；新的容器或数据库目标需重新核验。
+下表的收据、命令准入与结果接收适用于 GA-11 的共用写入链。安装实例、Compose 及网站备份的行保留此前的适配设计；本轮容器与数据库目标按 CORE-04、OPS-02 的登记范围和真实执行记录分别验收。
 
 | 责任方 | 实施输入与写入点 | 并发和恢复判定 |
 |---|---|---|
@@ -234,6 +234,6 @@ flowchart LR
 
 ## 8.2 实施工序与联调判定
 
-先完成 M1 的注册、建连与逐指标读取，同时保留 GA-11 的通用写命令能力。原 M2–M4 的领域用例已移出。独立容器重启、数据库备份与隔离恢复须重新核定 operation、适配边界、故障用例和工时。已启用能力回退时停止接收新命令，继续核对已受理命令并检查撤权。[研发计划与各里程碑](go-agent-development-plan.md#分阶段里程碑)
+M1 先交付注册、建连与逐指标读取，领域写入依赖 GA-11。原 M2–M4 的领域用例已移出。CORE-04 与 OPS-02 分别负责容器重启、数据库备份和隔离恢复；待登记的操作及权限在对应工作包接入前完成登记。已启用能力回退时停止接收新命令，继续核对已受理命令并检查撤权。[三批派工总览](go-agent-development-plan.md#三批派工总览)
 
 Console Mock 核对页面，API + SQLite 核对授权与持久化，真实 Linux 节点核对注册身份、WSS、Go 入口调用次数及现场效果。每次运行在对应场景填写验证层级。[联调工作页](spaces/implementation-review.md) · [Mock 测试入口](https://github.com/XCAngelWatch/AngelFleetConsole/blob/df715b38d174b2bdad7a5ab58150c05ead6c5d36/tests/e2e/helpers/mock-api.ts) · [本地真实后端用例](https://github.com/XCAngelWatch/AngelFleetConsole/blob/df715b38d174b2bdad7a5ab58150c05ead6c5d36/tests/local/real-backend.spec.ts)

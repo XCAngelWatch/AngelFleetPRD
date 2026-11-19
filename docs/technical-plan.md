@@ -6,7 +6,7 @@ AngelFleetConsole 负责控制台和云端 API。Linux 节点保留 1Panel Go co
 
 ## 执行摘要
 
-**本轮迁移范围已调整。** 网站管理、应用商店和 AI 相关能力移出。容器、已有或远端数据库、通用备份与面板快照继续保留。[查看 12 个功能域的迁移清单](#137-本轮非-ai-功能迁移清单) · [查看派工变化](go-agent-development-plan.md#分阶段里程碑)
+**本轮三批派工覆盖 11 个运维功能域，剩余工作量为 368–615 人日。** 首批交付概览、日志审计及节点授权，后续核心迁移主机、终端、容器和数据库，保障批接入备份与快照、计划任务、告警和工具箱。按工作包查看 Go、控制台与测试各自的任务、前置、权限、工时和验收证据。虚拟机按 KVM 条件另计；网站管理、应用商店与 AI 已移出。[三批派工总览](go-agent-development-plan.md#三批派工总览) · [12 个功能域的迁移范围](#137-本轮非-ai-功能迁移清单)
 
 **2026-11-19 更新 · GA-08 至 GA-10 的逐指标读取方案已定稿。** 第二次采样只有 CPU 成功时，清空缓存后，控制台应显示第二次的 CPU，以及第一次的内存值、采样时间和来源命令。联调样例已验证，真机验收待执行。[接口请求与响应](go-agent-interface-contract.md#53-逐指标读取与冷启动展示) · [两次采样的真机验收](spaces/implementation-review.md#两次采样后的无缓存验收)
 
@@ -54,7 +54,7 @@ flowchart LR
 
 | 要完成的工作 | 去哪里查 |
 |---|---|
-| 排期、派工、交接 | [§14 阶段退出条件](#14-迁移路线与任务级工作包)和 [Go Agent 研发计划](go-agent-development-plan.md)给出依赖、责任角色和工期。 |
+| 排期、派工、交接 | [§14 阶段退出条件](#14-迁移路线与任务级工作包)和[三批派工总览](go-agent-development-plan.md#三批派工总览)给出阶段门禁、三方任务、依赖、估算与验收证据。 |
 | 开始 Go / Console 联调 | [GA-01 契约](go-agent-interface-contract.md)确定仓库目录和节点协议。对接注册、建连用[首次采样 JSON](examples/go-agent-first-sample.json)，对接清缓存后的概览用[逐指标读取 JSON](examples/node-metric-read.v1.json)。实测结果填入[联调验收记录](spaces/implementation-review.md)。 |
 | 把一次操作从设计落实到源码 | [技术详细设计](technical-design.md)以一次重启串起三端；[Go 操作台账](operation-ledger.md)登记执行入口、取消边界和现场核验方法。 |
 | 查协议、数据和迁移范围 | [附录 A](#附录-a--协议数据与可靠性细则)规定协议，[附录 B](#附录-b--v2-源码基线与完整迁移矩阵)登记源码范围，[附录 C](#附录-c--数据约束与操作契约)列数据约束和操作注册表。状态机转移取自 [command-state.json](command-state.json)。 |
@@ -499,7 +499,7 @@ disposition,targetStage,workPackageId,acceptanceIds,status,evidenceRefs,gapDecis
 
 ## 13.7 本轮非 AI 功能迁移清单
 
-本轮将日常运维入口迁至 AngelFleetConsole。Console 管用户、租户、节点授权、操作意图与审计，节点上的 Go core/agent 继续操作本机资源。**范围从原清单的 14 个业务域收窄到 12 个，其中虚拟机按 KVM 环境选入。** 网站管理、应用商店及其专用流程退出。按原清单末尾的排除项，GPU 监控与 AI、MCP 一同排除。下表给出各域的交付边界；“首批”用于首个可联调版本，“后续”表示仍在迁移范围内，具体排期取决于能力和依赖。
+本轮将日常运维入口迁至 AngelFleetConsole。Console 管用户、租户、节点授权、操作意图与审计，节点上的 Go core/agent 继续操作本机资源。**范围从原清单的 14 个业务域收窄到 12 个，其中虚拟机按 KVM 环境选入。** 网站管理、应用商店及其专用流程退出。按原清单末尾的排除项，GPU 监控与 AI、MCP 一同排除。表中前 11 个域按三批派工，虚拟机单列条件范围。各包可在自身前置满足后开工，领域写操作还须通过共用写命令门禁。[三批派工总览](go-agent-development-plan.md#三批派工总览)
 
 | 保留的功能域 | 需要迁移到 Console 的能力 | Go 与数据边界、验收重点 |
 |---|---|---|
@@ -508,7 +508,7 @@ disposition,targetStage,workPackageId,acceptanceIds,status,evidenceRefs,gapDecis
 | 面板设置与安全 | 复用 Console 账号、组织、租户、角色和审计。首批补节点范围与服务端授权；会话、API 凭据及证书策略按目标安全模型适配。主题、语言、菜单、备忘录仅迁实际需要的入口。 | 面板升级、回滚、设备凭据轮换和救援 CLI 保留节点能力；MFA/Passkey、旧配置及凭据兼容需逐项核验。保留面板 TLS 与节点身份认证。历史许可证与上游商业授权分别处理。[Console 现有 API](https://github.com/XCAngelWatch/AngelFleetConsole/tree/df715b38d174b2bdad7a5ab58150c05ead6c5d36/cloudflare/api/src/routes) |
 | 主机管理 | 文件浏览、传输、编辑、权限、回收站/分享；监控、进程、SSH、防火墙、磁盘和挂载分批接入。 | 路径、挂载、主机账户和原始文件留节点。先读后写；停止进程、改防火墙/SSH、改磁盘须单独授权和审计。分享须验证节点归属、失效及撤销。 |
 | 终端 | 本机、SSH 和容器终端；连接配置、常用命令及导入导出。 | Go 持有 PTY 或 SSH 连接。云端发限时授权并审计；续租、撤权和断线应关闭原会话。容器终端与容器管理共用目标 ID。 |
-| 容器管理 | 保留 Docker 容器、镜像、registry、Compose/模板、网络、卷和 daemon 设置。先做清单与状态，再接日志、监控、构建与受控变更。 | Go 调本机 Docker。卷、Compose 文件和 daemon 配置保留原位；共享镜像、网络、卷不能按商店或站点标签批量清除。可靠写操作候选验收为独立测试容器重启，按原容器 ID 对账。[容器执行入口](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/service/container.go#L776-L806) |
+| 容器管理 | 保留 Docker 容器、镜像、registry、Compose/模板、网络、卷和 daemon 设置。先做清单与状态，再接日志、监控、构建与受控变更。 | Go 调本机 Docker。卷、Compose 文件和 daemon 配置保留原位；共享镜像、网络、卷不能按商店或站点标签批量清除。[CORE-04](go-agent-development-plan.md#core-04-容器与编排写入) 用独立测试容器重启验收可靠写操作，按原容器 ID 对账。[容器执行入口](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/service/container.go#L776-L806) |
 | 数据库 | 保留已有或已登记实例的管理及远端同步。MySQL、PostgreSQL、MongoDB、Redis 分开核对库/用户、权限、状态、配置、CLI 或持久化；每个引擎只开放它实际支持的操作。 | 原面板托管实例可能依赖本机安装记录和 Compose 配置；远端实例按授权连接管理，数据留远端。取消“从商店一键装库”。验收分本机托管与已登记远端，变更按引擎核验。[数据库路由](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/router/ro_database.go) · [本地配置依赖](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/service/database_common.go#L92-L111) |
 | 备份与快照 | 保留数据库与目录备份、备份记录、备份目标/桶和面板快照。对象存储按实际 provider、账号与还原验证逐个开放。 | Go 产出归档，保留来源、摘要和实际任务。单库恢复须回读已知数据；面板快照须另测所含内容、恢复及回滚。历史档可含站点/应用，须可识别依赖和提示，移出站点/应用专用的新建备份与恢复入口。[快照创建](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/service/snapshot_create.go) |
 | 计划任务 | 定时命令/脚本、保留域的数据库和目录备份、通用日志任务、脚本库、导入导出、执行日志与分组。 | 明确云端配置版本和节点调度责任；断网仍按约定执行，重连核对漏跑/重复。历史网站或应用备份、站点日志切割任务列出待处置，禁止自动转成其他作业。[任务分派](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/service/cronjob_helper.go#L97-L139) |
@@ -518,13 +518,15 @@ disposition,targetStage,workPackageId,acceptanceIds,status,evidenceRefs,gapDecis
 
 **退出边界。** 网站域移出站点 CRUD、域名、站点 HTTPS/ACME/DNS 账号、站点模板、各语言网站运行环境、反向代理、OpenResty 配置/模块、WAF、站点专用备份/恢复及日志。商店域移出应用目录、推荐、商店同步、安装/升级/卸载、参数配置、应用级备份和自定义商店。已经运行的容器、数据库和挂载卷可从保留域按权限运维。移交时记录原安装关联、历史作业和档案，原资源及历史数据保留。云端需要自有多租户和节点授权；迁入上游企业集群、商业 RBAC、SSO 或私有 provider 须另立范围。
 
-**派工顺序。** 先做 GA-01 至 GA-10 的注册、建连、概览、授权与真机验收。随后用独立测试容器验证可靠写入，再用已登记的隔离测试库验证备份、恢复及回滚。后两项是替代原 OpenResty/网站样板的候选，实施前核定目标权限、操作名、证据和工时；可复用原协议，须重新取得目标场景的执行证据。一个可复现的 MySQL 场景是在同一隔离库写入 A、备份、改为 B，再恢复并回读 A。远端来源也须验证节点上的客户端镜像；快照恢复另验。[当前派工状态](go-agent-development-plan.md) · [MySQL 实例来源](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/service/database_mysql.go#L1628-L1668) · [MySQL 恢复实现](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/service/backup_mysql.go#L112-L226)
+**估算与依赖。** GA-01 契约样例已验证。M1 的 GA-02 至 GA-10 剩余 22–38 人日；共用写命令 GA-11 另计 11–18 人日；概览、审计与设置的后续扩展 FOLLOW 为 49–86 人日；核心域 CORE 为 161–264 人日；保障域 OPS 为 125–209 人日。五项均为 Go、控制台与测试的增量人日，合计 368–615 人日。团队排期另看并行人员及各包前置。[分批明细](go-agent-development-plan.md#三批派工总览)
+
+**可验收的交接点。** [CORE-01](go-agent-development-plan.md#core-01-主机文件与进程只读)核对主机只读来源，[CORE-04](go-agent-development-plan.md#core-04-容器与编排写入)以独立容器验证重启和幂等；[CORE-07](go-agent-development-plan.md#core-07-已有与远端数据库盘点)核对本地与远端数据库来源。[OPS-02](go-agent-development-plan.md#ops-02-mysql-单库备份与隔离恢复)在同一隔离 MySQL 库写入 A、备份、改为 B，再恢复并回读 A。远端来源须验证节点上的客户端镜像；[OPS-05](go-agent-development-plan.md#ops-05-面板快照导入恢复与回滚)单独验收面板快照恢复及回滚。各包先登记适用操作、目标权限和范围，再取真实执行证据。[MySQL 实例来源](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/service/database_mysql.go#L1628-L1668) · [MySQL 恢复实现](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/service/backup_mysql.go#L112-L226)
 
 **盘点口径。** 本次核对本地 1Panel `dev-v2@aaba86d` 与 Console `main@df715b3`。当前上游 `frontend/src/routers/modules/` 有 13 个 TypeScript 文件，首页和扩展另有注册；附录 B 的 34 个 core/agent 路由组是源码盘点基线。验收以本节保留的具体能力、适用环境和证据逐项计数。数据盘点按配置的安装根目录和实际文件执行；除 core、agent、task、alert 等库，上游还打开监控数据库。core 与 agent 的备份服务各有账号加密写入路径；迁移时按实际账号归属验证备份可读、样本可恢复。[core 备份账号](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/core/app/service/backup.go#L90-L98) · [agent 备份账号](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/service/backup.go#L197-L205)。[前端路由组装](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/frontend/src/routers/router.ts) · [core 数据库初始化](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/core/init/db/db.go) · [agent 数据库初始化](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/init/db/db.go)
 
 # 14. 迁移路线与任务级工作包
 
-2026-11-19 核对本地源码后，P1 与 P2 的首个联合交付定为注册后首次可信采样。先做可在两租户、两台 Linux 节点复验的只读链路，再开放可能改变主机状态的命令。近期工作按[Go Agent 研发计划](go-agent-development-plan.md)逐项派工，通用命令、备份和恢复按保留目标派工。旧 OpenResty 重启与网站备份/恢复仅保留历史设计记录，不能凭原工单计入本轮成绩。[操作台账](operation-ledger.md)
+2026-11-19 核对本地源码后，P1 与 P2 的首个联合交付定为注册后首次可信采样。先做可在两租户、两台 Linux 节点复验的只读链路，再开放可能改变主机状态的命令。近期工作按[三批派工总览](go-agent-development-plan.md#三批派工总览)逐项分给 Go、控制台和测试，共用写命令只在 GA-11 计工。旧 OpenResty 重启与网站备份/恢复仅保留历史设计记录，不能凭原工单计入本轮成绩。[操作台账](operation-ledger.md)
 
 | 阶段 | 可交付结果 | 依赖与退出条件 |
 |---|---|---|

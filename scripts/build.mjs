@@ -32,6 +32,7 @@ function markdownAnchor(title) {
 function headingId(title, usedIds, useTitle) {
   let id = title.match(/^([\d]+(?:\.[\d]+)*)[.\s]/)?.[1];
   if (id) id = `section-${id.replaceAll('.','-')}`;
+  else if (/^(?:FOLLOW|CORE|OPS)-\d{2}\s/.test(title)) id = title.split(' ')[0].toLowerCase();
   else if (/^附录 [A-E]/.test(title)) id = `appendix-${title.match(/^附录 ([A-E])/)[1].toLowerCase()}`;
   else if (/^[A-E]\.\d/.test(title)) id = `section-${title.match(/^([A-E](?:\.\d+)+)/)[1].toLowerCase().replaceAll('.','-')}`;
   else id = useTitle ? markdownAnchor(title) : `heading-${createHash('sha256').update(title).digest('hex').slice(0,10)}`;
@@ -118,7 +119,7 @@ const documents = await Promise.all([
   readDocument('technical-plan.md', 'index.html', '技术方案', '1Panel v2 Cloudflare 控制面技术方案，涵盖 XC React、Go 功能迁移、节点协议与单租户 1 万节点验收基线。'),
   readDocument('technical-design.md', 'technical-design.html', '技术详细设计', '对照 1Panel 前端、core 与 agent 的源码入口，说明节点采样、命令执行与结果对账的实现边界，附注册、终端、制品与故障恢复验收场景。'),
   readDocument('go-agent-interface-contract.md', 'go-agent-interface-contract.html', '节点契约', 'GA-01 确定 Go Agent 的源码仓库与模块目录，并给出节点注册、建立连接及首次可信采样的 HTTP 与 WSS 联调示例。'),
-  readDocument('go-agent-development-plan.md', 'go-agent-development-plan.html', '研发计划', 'Go Agent 首次可信采样的派工和验收、通用写能力及原 GA-12 至 GA-19 的范围调整。'),
+  readDocument('go-agent-development-plan.md', 'go-agent-development-plan.html', '研发计划', '11 个运维域的三批派工计划，列出 Go、控制台和测试的前置依赖、权限、人日与验收条件。'),
   readDocument('operation-ledger.md', 'operation-ledger.html', 'Go 操作台账', '查阅节点操作对应的 1Panel 源码、适配范围、互斥与结果核验方式。'),
   readDocument('spaces/implementation-review.md', 'implementation-review.html', '联调验收记录', '核对节点注册与逐指标采样的真机证据，区分当前联调工作和已移出的历史用例。')
 ]);
