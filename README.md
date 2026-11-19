@@ -1,8 +1,8 @@
 # AngelFleet PRD
 
-1Panel v2 Cloudflare 控制面的实施设计。首版保留节点上的 Go core/agent，由新增的 connector 主动连云。
+AngelFleet 在云端控制台集中管理选定的 1Panel 运维能力。首批验收节点接入、CPU 与内存概览及审计。Linux 节点继续复用现有 Go core/agent。
 
-**给 Go、控制台和测试同事分享[三批派工总览](https://xcangelwatch.github.io/AngelFleetPRD/go-agent-development-plan.html#三批派工总览)。** 首批节点接入、后续核心与运维保障覆盖 11 个功能域。每个工作包列出三方任务、前置依赖、权限、人日及验收证据。可直接分享 [GA-04 节点身份](https://xcangelwatch.github.io/AngelFleetPRD/go-agent-development-plan.html#ga-04)、[CORE-04 容器写入](https://xcangelwatch.github.io/AngelFleetPRD/go-agent-development-plan.html#core-04)或 [OPS-02 单库备份恢复](https://xcangelwatch.github.io/AngelFleetPRD/go-agent-development-plan.html#ops-02)。虚拟机另按条件选入。[本轮范围](https://xcangelwatch.github.io/AngelFleetPRD/index.html#section-13-7)
+**先看 [产品 PRD](https://xcangelwatch.github.io/AngelFleetPRD/product-prd.html)，研发接单看 [三批派工总览](https://xcangelwatch.github.io/AngelFleetPRD/go-agent-development-plan.html#三批派工总览)。**
 
 | 阅读目的 | 入口 |
 |---|---|

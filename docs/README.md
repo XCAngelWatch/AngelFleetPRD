@@ -1,6 +1,6 @@
 # AngelFleet PRD 文档目录
 
-接单先打开[在线三批派工总览](https://xcangelwatch.github.io/AngelFleetPRD/go-agent-development-plan.html#三批派工总览)。按 GA、FOLLOW、CORE 或 OPS 编号可查 Go、控制台和测试各自的任务、依赖、权限、人日与完成判据。维护文档时按下表修改对应正文，其他页面引用该处。
+先看[产品 PRD](product-prd.md)了解首批交付范围。研发按[三批派工总览](go-agent-development-plan.md#三批派工总览)查看当前任务、依赖、角色和验收条件。
 
 | 目录 | 问题 | 维护位置 |
 |---|---|---|
