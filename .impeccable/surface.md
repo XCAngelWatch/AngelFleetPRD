@@ -12,7 +12,7 @@ OWN-WORLD: Deep teal navigation, cool white reading paper, restrained copper use
 
 STORY: Read the design boundary, jump to a chapter or search for an operation, and reference its stable anchor.
 
-FIRST VIEWPORT: Compact project masthead above a 260 px chapter rail and a calm article column. The document title and design baseline lead directly into the architecture decisions; search is always at the top of the rail.
+FIRST VIEWPORT: The directory pairs the five topic documents with direct chapter links and acceptance status. A shared masthead holds search. On article pages a deep teal rail tracks the current document and chapter.
 
 FORM: Field manual, candidate 4; seed:b5f09f712dda62c9. The signature is synchronized chapter location in the contents rail, with standard links and search preserving familiar wayfinding.
 

@@ -1,147 +1,41 @@
-# AngelFleet PRD 威胁模型
+# AngelFleet 威胁评估记录
 
-## Executive summary
+本记录保存威胁编号、风险判断及作出判断时的证据。实际交付的控制措施、责任边界和通过条件见[技术方案 · 安全边界如何验收](technical-design.md#安全边界如何验收)。
 
-当前仓库是 Node.js/Markdown 静态文档站；Workers、Durable Objects、D1、Queues、R2、connector 和 Go 执行栈是 PRD 描述的目标系统，尚未由本仓库实现。因此本模型把“当前公开发布链”和“目标多租户控制面”分开。目标系统最高风险集中在跨租户授权、节点特权操作、票据/命令重放、R2 对象越权和控制面与本地 Go 入口之间的写入边界。
+## 评估范围与假设
 
-## Scope and assumptions
+评估覆盖两类资产。当前仓库发布静态文档，构建输入、依赖、工作流和 Pages 产物可在仓库中核对。目标系统按公网多租户、浏览器同源访问和设备主动建连评估，涉及控制面、区域接入、节点及其业务数据。生产账号、验证器、节点、日志管道及区域中继的实际配置尚缺独立运行证据。
 
-- 当前站点范围：`docs/`、`scripts/`、`src/`、`.github/workflows/` 生成并发布 GitHub Pages 静态站点。
-- 目标运行范围：XC React、Cloudflare Workers、Control Gateway、区域 CN/Global Relay、TenantData/D1、AgentConn/TerminalRelay DO、Queues、R2、connector、本地 journal 与原 Go core/agent。
-- 目标部署假设：公网多租户 SaaS；浏览器使用同域会话，节点通过主动 WSS 连接；控制面和节点均需做服务端授权。
-- 数据敏感度假设：节点凭据、终端内容、备份、配置和审计属于高敏感资产；终端输出和日志默认脱敏。
-- 真实代码、真实节点、Cloudflare 账号配置、WAF/Pages Header 和容量测试不在当前仓库证据内。
+风险来源包括匿名客户端、已认证的受限租户成员、失效的浏览器或节点凭证、重复或迟到的事件、已受影响的节点进程及发布依赖。评估假设对方尚未取得 Cloudflare 账号、GitHub 仓库所有者或主机 root 权限。已取得主机 root 的人员可绕过节点本地约束。认证提供方、Cookie 域名、生产地域、企业私有服务商、每租户节点上限和保留策略仍影响判断。
 
-未决问题：最终认证提供方和 Cookie 部署域名、生产区域/数据驻留、企业私有 provider 的真实边界、每租户节点上限与保留策略，都会改变风险等级和控制配置。
+## 资产与保护目标
 
-## System model
+| 资产 | 需要保护的性质及原因 |
+|---|---|
+| 租户成员关系与授权版本 | 机密性、完整性。决定谁能控制哪些节点。 |
+| 注册、建连与终端角色票据 | 机密性、完整性。可授予设备或终端访问。 |
+| 命令意图、幂等收据与本机 journal | 完整性、可用性。用于区分已执行、重复投递和待核对动作。 |
+| 主机凭据、私钥及 API 密钥 | 机密性。泄露可能导致直接访问基础设施。 |
+| 终端输入输出、日志及备份 | 机密性、完整性。可能包含客户数据和秘密。 |
+| R2 制品与清单 | 机密性、完整性、可用性。用于安装与恢复数据。 |
+| 审计、outbox 与发布产物 | 完整性、可用性。用于追溯和故障恢复。 |
 
-### Primary components
+## 风险评级
 
-- 静态发布链：Markdown → `scripts/build.mjs` → `dist/` → GitHub Actions → GitHub Pages。
-- 公网控制面：XC React 与入口 Worker，负责会话、租户、权限、命令意图和审计。
-- 状态与异步：TenantData/D1 保存租户权威状态；AgentConn/Relay DO 协调连接、租约和顺序；Queues 只做持久补偿。
-- 节点接入与执行：connector → 区域 Relay → 受认证 mTLS 隧道 → Control Gateway → AgentConn/TerminalRelay DO；再由 connector 进入 operation adapter、本地 journal 和原 Go core/agent。Relay 只承载连接和帧转发，不保存业务事实。
-- 制品与日志：R2 保存备份、安装包、导出和归档；D1 保存索引、摘要和审计。
+可能性、影响和优先级沿用设计评估时的判断。跨租户突破且能操作客户节点为极高优先级。需要特定票据、动作或对象才能触及敏感资产时为高优先级。公开文档完整性受损、影响范围可界定时为中等。未跨越租户或主机边界的低影响元数据暴露属低级。
 
-### Data flows and trust boundaries
+| 编号 | 风险条件与主要影响 | 可能性／影响／优先级 | 已有依据、证据缺口及可观察信号 |
+|---|---|---|---|
+| TM-001 | 租户或节点授权错误可能导致跨租户读取或命令执行。 | 中／极高／极高 | 有租户授权设计，缺真实部署的双租户拒绝记录。可观察授权归属不匹配及重复拒绝。 |
+| TM-002 | 过期或重复使用的注册、角色票据及连接代次可能授予设备或终端访问。 | 中／极高／高 | 有一次性票据、角色及租约契约。GA-01 有样例验证，部署验证器证据待补。可观察票据失败、重放与旧代次拒绝计数。 |
+| TM-003 | 特权适配器未约束获准的文件范围、参数或动作时，主机文件和凭据可能受损。 | 中／极高／高 | 有操作登记与源码定位。缺实际适配入口的拒绝记录和执行标记。可观察路径与参数拒绝、进程或本地任务标记。 |
+| TM-004 | 浏览器会话的来源或请求校验失效，可能使用户账户承担未授权的任务或终端动作。 | 中／高／高 | 有会话和 Upgrade 验收要求，缺边缘运行环境的实际响应及拒绝记录。可观察来源不匹配和 CSRF 拒绝。 |
+| TM-005 | 制品地址授予的租户、对象或动作范围错误，可导致备份或安装内容泄露、篡改。 | 中／高／高 | 有 R2 制品和摘要契约，缺实际账号策略及对象读写结果。可核对对象、租户、方法、期限和结果。 |
+| TM-006 | 重复、迟到或乱序事件可能重复产生副作用或覆盖较新的命令状态。 | 中／高／高 | 有事件、修订及命令状态定义，缺消费者与真实节点的执行计数。可观察重复、冲突和迟到事件率。[命令状态定义](command-state.json) |
+| TM-007 | 日志或导出管道保留凭据、终端输入或制品地址，可暴露客户数据。 | 中／高／高 | 有脱敏要求，缺生产日志链路与访问证据。可核对秘密模式检测结果、导出和审计访问日志。 |
+| TM-008 | 构建依赖或发布身份受影响可能损害公开文档及其产物的完整性。 | 低／中／中 | 仓库含依赖锁文件、构建检查和 Pages 工作流。分支保护与实际审批配置在仓库外。可核对工作流审计、依赖告警及产物摘要。 |
+| TM-009 | 区域中继路由错误或凭据受影响，可能使不同租户、节点或代次的消息混用。 | 中／极高／高 | 有中继身份及设备代次设计，缺实际路由、证书轮换与切换证据。可观察租户或节点归属不符、旧代次拒绝与异常切换。 |
 
-- Internet → React/入口 Worker：会话、租户上下文、命令、文件元数据；HTTPS、Cookie/CSRF/Origin、服务端 RBAC 和输入 schema 必须同时生效。
-- 入口 Worker → TenantData/D1：授权后的租户状态、命令意图、审计和 outbox；只允许预定义领域方法，不接受客户端 SQL 或任意 binding。
-- TenantData/Queues → AgentConn/Relay DO：事件、代次、租约和结果引用；按 tenant/node/terminal 绑定，使用 eventId、revision 和幂等收据去重。
-- 区域 Relay → Control Gateway：设备 WSS 帧和区域接入上下文；使用 Relay mTLS 认证、租户/节点映射、协议校验、epoch/incarnation 和重放防护。Relay 身份不能替代设备身份。
-- DO → connector：经区域 Relay 转发的 WSS 控制消息和角色票据；节点证明身份、核验 epoch、绝对租约和 capability 后才接收。
-- connector → Go/core/agent：本机 Unix socket 或受控适配入口；操作 registry、资源锁、路径边界和本地 journal 约束特权动作。
-- Browser/connector → R2：预签名 multipart 和下载；URL 绑定租户、artifact、动作和有效期，完成后校验 SHA-256。
-- Developer → CI → GitHub Pages：源文档、依赖、构建产物；分支保护、锁文件、构建检查和产物一致性是发布边界。
+## 静态发布证据
 
-#### Diagram
-
-```mermaid
-flowchart TD
-    User["Browser user"] --> Edge["React and edge gateway"]
-    Edge --> Data["TenantData and D1"]
-    Edge --> ControlDO["AgentConn and Terminal Relay DO"]
-    Data --> Queue["Outbox Queues"]
-    Queue --> ControlDO
-    Edge --> Gateway["Control Gateway"]
-    Connector["Node connector"] --> RegionalRelay["Regional Relay"]
-    RegionalRelay --> Gateway
-    Gateway --> ControlDO
-    Connector --> Go["Go core and agent"]
-    Edge --> Objects["R2 objects"]
-    Developer["Developer and CI"] --> Pages["Static Pages"]
-    Pages --> User
-```
-
-## Assets and security objectives
-
-| Asset | Why it matters | Security objective (C/I/A) |
-|---|---|---|
-| Tenant membership and authorization versions | Determines who can control which node | C/I |
-| Enrollment, role and connection tickets | Grants node or terminal access | C/I |
-| Command intent, idempotency receipts and journal | Prevents duplicate or unknown host actions | I/A |
-| Host credentials, private keys and API keys | Can grant direct infrastructure access | C |
-| Terminal input/output, logs and backups | May contain secrets and customer data | C/I |
-| R2 artifacts and manifests | Can install or restore software/data | C/I/A |
-| Audit, outbox and deployment artifacts | Required for investigation and safe recovery | I/A |
-
-## Attacker model
-
-### Capabilities
-
-- Remote authenticated tenant member attempting privilege escalation or cross-tenant access.
-- Unauthenticated internet client probing enrollment, login, WSS, upload and download surfaces.
-- Compromised or replaying browser session, stale node credential, delayed queue message or forged event.
-- Malicious or compromised node process able to submit malformed results through its connector identity.
-- Developer or dependency compromise affecting the public build or GitHub Actions artifact.
-
-### Non-capabilities
-
-- No assumption that an attacker already has production account, Cloudflare account, GitHub owner, or host root access.
-- No claim that the public static site itself executes control-plane operations; it only publishes design artifacts.
-- A root operator on a managed node can bypass a local fence; this remains an explicit trust-boundary limitation.
-
-## Entry points and attack surfaces
-
-| Surface | How reached | Trust boundary | Notes | Evidence |
-|---|---|---|---|---|
-| Login/session and deep links | Browser HTTPS | Internet → edge → tenant data | Cookie, CSRF, Origin and tenant checks | `docs/technical-plan.md` §10, §13.1 |
-| Command API | React mutation | Edge → D1/DO → node | Idempotency, resourceVersion, capability and operation schema | `docs/technical-plan.md` §8, A.5, C.2 |
-| Enrollment and WSS | Installer/connector | Internet → DO → node | Ticket binding, epoch, lease and replay protection | `docs/technical-plan.md` A.2, A.7, A.8 |
-| Regional Relay and Gateway | Connector WSS / mTLS tunnel | Internet or regional network → Relay → Gateway → DO | Relay certificate rotation, tenant/node derivation, epoch and replay checks, rate limits and backpressure | `docs/technical-plan.md` §4, §9, A.2, A.3 |
-| File upload/download | Browser or connector | Edge → R2 → node | Presigned URL scope, path boundary and SHA-256 | `docs/technical-plan.md` §11, A.10 |
-| Local Go adapters | Unix socket or local service | Connector → host privilege | Shell/path/host-key and resource-lock boundary | `docs/technical-plan.md` §8, §9, B.5.3 |
-| CI and Pages artifact | Git push | Developer → CI → public site | Dependency, source and generated artifact integrity | `.github/workflows/deploy.yml`, `scripts/check.mjs` |
-
-## Top abuse paths
-
-1. A tenant member changes `tenantId` or `nodeId` in a command request → gateway trusts client context → command reaches another tenant’s node → privileged host action occurs.
-2. An attacker obtains a stale enrollment or terminal ticket → replays it through WSS → missing role/epoch/expiry check accepts the connection → terminal or node control is exposed.
-3. A file operation accepts `..`, a symlink, or an alternate mount → adapter resolves outside the authorized root → attacker reads or overwrites host files.
-4. A script or cron parameter reaches a shell string → schema does not constrain argv → command injection executes with the connector’s host privileges.
-5. A presigned URL is reused after completion or changed to another artifact → R2 path is not bound to tenant and action → backup or installation data is disclosed or replaced.
-6. A Queue/outbox event is delivered twice or out of order → consumer lacks event/revision CAS → an old result overwrites a newer command state or repeats a destructive action.
-7. A cookie-authenticated request or WSS upgrade arrives from an untrusted Origin → CSRF/Origin checks are missing or applied after upgrade → a victim’s session performs a privileged action.
-8. A secret, ticket, terminal input, or backup URL is logged → logs are exported to a broader audience → infrastructure credentials or customer data leak.
-9. A compromised or misconfigured Relay forwards frames for another tenant or replays an old connection → Gateway trusts Relay metadata without rechecking node identity and epoch → cross-tenant delivery or stale command execution occurs.
-
-## Threat model table
-
-| Threat ID | Threat source | Prerequisites | Threat action | Impact | Impacted assets | Existing controls (evidence) | Gaps | Recommended mitigations | Detection ideas | Likelihood | Impact severity | Priority |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| TM-001 | Tenant member | Valid session; cross-tenant identifiers accepted | Submit command or read result for another tenant | Cross-tenant control/data access | Membership, commands, host state | Server-side tenant/node checks in §10, A.4 | Runtime implementation absent | Derive tenant from verified principal; reject client binding names; add cross-tenant negative tests | Alert on repeated 403/404 probing and tenant mismatch | medium | critical | critical |
-| TM-002 | Remote attacker | Ticket leakage or weak replay guard | Reuse enrollment/role ticket or stale epoch | Node or terminal takeover | Tickets, host access | One-time tickets, role binding, epoch and lease in A.2/A.7/A.8 | No deployed verifier evidence | Hash tickets, bind tenant/node/incarnation/role, atomic consume, absolute expiry, rate limit | Track ticket failures, replay count and old-epoch rejects | medium | critical | high |
-| TM-003 | Authenticated operator or hostile input | File/script operation reaches privileged adapter | Use traversal, symlink, shell metacharacters or arbitrary method/path | Host file overwrite or RCE | Host state, credentials | Operation registry and A.12 security cases | Go adapter changes not implemented | Canonicalize and constrain roots; parameterized argv; allowlisted operation schema; fail closed | Audit rejected paths/argv and process markers | medium | critical | high |
-| TM-004 | Browser attacker | Cookie session; missing CSRF/Origin gate | Forge state-changing HTTP or WSS request | Unauthorized task/terminal action | Session, commands, terminal | §10 and A.12 require CSRF/Origin checks | Edge runtime headers not deployed | Same-site cookie, CSRF token, Origin allowlist before upgrade, frame-ancestors | Log Origin mismatch and CSRF failures | medium | high | high |
-| TM-005 | URL holder or another tenant | Presigned URL not scoped to artifact/action | Download, replace or replay R2 object | Backup/install data disclosure or tampering | R2 artifacts | A.10 and A.12 bind URL and SHA-256 | R2 policy/config not present | Server-generated keys, short expiry, one-purpose method, completion revocation and object ACL checks | Record artifact, tenant, method, expiry and result | medium | high | high |
-| TM-006 | Queue/event attacker or duplicate delivery | Consumer lacks CAS/idempotency | Replay or reorder command/result event | Duplicate side effect or state corruption | Commands, journal, audit | eventId, revision, intentHash and outbox design in A.5/C.1 | Runtime consumer not implemented | Enforce event uniqueness, CAS merge, command tombstone and conflict review | Metrics for duplicate, conflict and late event rates | medium | high | high |
-| TM-007 | Log reader or compromised exporter | Secrets reach logs | Read tickets, keys, terminal input or URLs | Credential/data disclosure | Secrets, logs, backups | Redaction requirements in §10, A.10, A.12 | No log pipeline evidence | Structured allowlist, redaction tests, restricted retention and access | Secret-pattern scanner and audit access logs | medium | high | high |
-| TM-008 | Developer/dependency attacker | CI token or dependency compromise | Alter generated site or workflow artifact | Public integrity loss, misleading design or supply-chain foothold | Source, Pages artifact | Lockfile, build/check and Pages workflow | Branch/review controls external to repo | Pin actions, protect main, review lockfile changes, verify artifact hash | Workflow audit, dependency alerts, artifact digest | low | medium | medium |
-| TM-009 | Compromised or misconfigured Relay | Relay certificate or routing state compromised; Gateway trusts forwarded tenant/node fields | Forward, replay or mix frames across tenants, nodes or epochs | Cross-tenant command/terminal access or stale action | Commands, tickets, host state | Relay mTLS and epoch/incarnation rules in §4, §9, A.2, A.3 | Relay runtime, rotation and routing evidence absent | Rotate Relay certificates, derive tenant/node from verified device identity, reject old epoch, rate-limit and audit frame routing | Alert on tenant/node mismatch, replay, old-epoch rejects and abnormal failover | medium | critical | high |
-
-## Criticality calibration
-
-- **Critical**: cross-tenant or host-privilege compromise that can execute or disclose customer operations; example TM-001.
-- **High**: ticket/command/file/terminal abuse that can affect a node or sensitive artifact but requires a narrower precondition; examples TM-002–TM-007.
-- **Medium**: public documentation or CI integrity loss without direct host access, or availability impact with bounded blast radius; example TM-008.
-- **Low**: metadata leakage or noisy rejection telemetry that does not cross tenant or host boundaries.
-
-## Focus paths for security review
-
-| Path | Why it matters | Related Threat IDs |
-|---|---|---|
-| `docs/technical-plan.md` §4, §8–§10, A.2, A.3, A.5, A.7, A.10 | Defines Relay/Gateway trust, auth, tickets, command and file contracts | TM-001–TM-009 |
-| `docs/command-state.json` | Machine-readable state transitions and late-event behavior | TM-006 |
-| `docs/acceptance-ids.json` | Ensures security and capacity gates cannot disappear from traceability | TM-001–TM-009 |
-| `scripts/build.mjs` and `scripts/check.mjs` | Generates and validates public artifacts | TM-008 |
-| `.github/workflows/deploy.yml` | Controls dependency install and Pages publication | TM-008 |
-| `docs/operation-ledger.md` | Maps privileged operations to Go entrypoints and recovery evidence | TM-003, TM-006 |
-
-## Notes on use
-
-This is a design-time model. It does not prove that the target Workers, DO, D1, R2, connector or Go controls exist in production. Re-run the model after P0 freezes the deployment model and after P2/P3 provide real node and runtime evidence. The public static site is reviewed separately from the future control plane.
-
-## Static publication security baseline
-
-The current site is a generated static artifact. Its JavaScript uses escaped search data and Mermaid strict mode, but those code properties do not establish the response-header policy of the hosting platform. The target publication must verify, with an HTTP response test, a restrictive Content-Security-Policy, `frame-ancestors` protection, `X-Content-Type-Options: nosniff`, and an explicit `Referrer-Policy`; source maps and build-time secrets must not be published. The current GitHub Pages workflow verifies build, manifest and HTTP availability, but does not claim these headers are present. Header verification remains a publication gate when the hosting target is selected.
+静态站点构建和检查位于 `scripts/build.mjs` 与 `scripts/check.mjs`，发布配置位于 `.github/workflows/deploy.yml`。锁文件、源文件摘要、搜索输出转义和 Mermaid strict 配置可在仓库核对。2026-11-19 首页的 HTTPS 响应为 200，响应头、发布清单摘要及当日覆盖范围见[原始线上核查记录](reviews/2026-11-19-online-audit.md#核对范围)。

@@ -1,8 +1,8 @@
-# GA-01 · Go Agent 仓库与联调契约
+# 节点接入与接口契约
 
-**冻结版本 `ga01.v1` · 2026-11-19。** 第一条联调链路从 Console 预登记节点开始，经 Go 注册、主动建连和一次 `node.inspect`，以页面读数能追溯到同一次本机采样结束。示例使用租户 `tenant-a`、节点 `node-a`、身份代次 `inc-01` 和命令 `cmd-001`。
+**GA-01 冻结版本 `ga01.v1` · 2026-11-19。** 第一条联调链路从 Console 预登记节点开始，经 Go 注册、主动建连和一次 `node.inspect`，以页面读数能追溯到同一次本机采样结束。示例使用租户 `tenant-a`、节点 `node-a`、身份代次 `inc-01` 和命令 `cmd-001`。
 
-[下载完整联调样例（JSON）](examples/go-agent-first-sample.json)。`timeline` 给出交互顺序；`http` 收录 11 对请求与响应，`websocket` 收录带发送方向的 10 帧原文，`localObservation` 提供一次本机观察，`cases` 给出 11 个独立分支。下文用条目 ID 定位原文。示例域名和占位票据用于本地回放，接入测试环境时使用实际域名、会话与新挑战。
+[下载完整联调样例（JSON）](examples/go-agent-first-sample.json)。`timeline` 给出交互顺序；`http` 收录 11 对请求与响应，`websocket` 收录带发送方向的 10 帧原文，`localObservation` 提供一次本机观察，`cases` 给出 11 个独立分支。Go、控制面与前端按下文章节的条目 ID 对照同一份报文。示例域名和占位票据用于本地回放，接入测试环境时使用实际域名、会话与新挑战。
 
 GA-08 至 GA-10 使用独立读取契约 `node-metric-read.v1`。需要在新标签页展示各指标最后有效值时，直接看[逐指标读取与冷启动展示](#53-逐指标读取与冷启动展示)及[两次采样的联调 JSON](examples/node-metric-read.v1.json)。
 
@@ -71,6 +71,8 @@ XCAngelWatch/AngelFleetAgent/
 | `enroll.challenge` | `phase:"challenge"`，携带 enrollmentId、requestId、publicKey、algorithm。 | `200` 返回 challengeId、algorithm、expiresAt、proofInput。示例挑战有效 60 秒。 |
 | `enroll.prove` | 沿用同一组入参，改为 `phase:"prove"`，附 challengeId 与 signature。 | 首次绑定返回 `201`，包含 tenantId、nodeId、nodeIncarnation、credentialVersion、keyVersion、publicKeyHash。服务端在同一事务中消费票据、绑定节点和写成功审计。 |
 
+**待补的注册恢复用例。** 公开样例分别覆盖注册成功后丢回包，以及未消费票据过期。已消费票据在原设备请求恢复前到期时，恢复窗口、超窗响应和人工恢复入口仍待控制面与 Go 共同冻结。该分支须查原绑定并核对节点吊销状态，禁止覆盖身份或重复消费；GA-10 记录到期前后行为、绑定行数与成功审计数。
+
 **注册与建连共用的签名规则。** 公钥为原始 32 字节，签名为 64 字节，publicKey、proofInput、signature 均使用无填充 base64url。Go 解码 proofInput，核对 `domain=angelfleet.node-proof.v1`、可信 audience、用途、requestId、公钥摘要、挑战标识及有效期。注册用途 `enroll` 还须匹配 enrollmentId；建连用途 `connect` 须匹配 nodeId、nodeIncarnation、keyVersion、protocolVersion。确认后对**解码所得原字节**作 Ed25519 签名。服务端按已保存的一次性挑战核对绑定、期限与签名。下文 Go 片段执行最后的签名步骤。
 
 # 4. 连接票据与 WSS 握手
@@ -89,6 +91,8 @@ XCAngelWatch/AngelFleetAgent/
 | AgentConn → Go · `welcome` | 云端原子分配新的候选 epoch；Go 校验绑定、版本及代次，将最高 epoch 写入 journal。 |
 | Go → AgentConn · `ready` | journal 提交后回送同一 epoch，云端核对候选代次。 |
 | AgentConn → Go · `ready.ack` | 确认激活后才能向该连接投递。节点此时可显示在线，指标等待有效采样。 |
+
+**断开事件的顺序。** AgentConn 只把已激活连接的状态同步到该节点绑定的 D1 摘要。按 epoch 合并，新代次覆盖旧代次；同一代次一旦关闭，迟到的激活事件不能使它重新上线。GA-10 激活第二代连接后再送达第一代的关闭记录，节点详情和 `metrics/latest` 应保持在线。随后关闭第二代并重送其激活记录，两个读取入口都应保持离线。仅有连接事件时，指标值、采样时间、来源和投影版本保持原值。
 
 Go 发送的第一条 `ready` 帧原文如下。
 
@@ -157,7 +161,7 @@ GA-07 在下游采集点增加可选 `data.collection`。其中 `sampledAt` 是�
 | S1（`cmd-001`）两项成功 | 23.5% · 1795046409000 · `cmd-001` | 1 GiB · 1795046409000 · `cmd-001` |
 | S2（`cmd-002`）只有 CPU 成功 | **0%** · **1795046420000** · **`cmd-002`** | **1 GiB** · **1795046409000** · **`cmd-001`**，标记「上次有效，本次采集失败」 |
 
-GA-08 在 TenantData D1 按 `(tenantId,nodeId,nodeIncarnation)` 保存最近一次已有终态采样结果的命令，并按指标保存最后有效的值、采样时间与来源命令。控制面受理命令时为该绑定分配递增的 `sampleOrder`。合并终态结果时，在同一事务中更新命令与读取数据。S2 推进最近命令及 CPU，内存保留 S1，同时登记 S2 的内存失败。重复回执不得再次推进版本；迟到结果仍可补入有效指标，条件是它的受理序号高于该指标上次好值的来源序号。断线、心跳和重连不改写来源与时间。[落库与乱序合并](technical-design.md#72-节点采样怎样进入-xc-仪表盘)
+GA-08 在 TenantData D1 按 `(tenantId,nodeId,nodeIncarnation)` 保存最近一次已有终态采样结果的命令，并按指标保存最后有效的值、采样时间与来源命令。控制面受理命令时为该绑定分配递增的 `sampleOrder`。合并终态结果时，在同一事务中更新命令与读取数据。S2 推进最近命令及 CPU，内存保留 S1，同时登记 S2 的内存失败。重复回执不得再次推进版本；迟到结果仍可补入有效指标，条件是它的受理序号高于该指标上次好值的来源序号。断线、心跳和重连不改写来源与时间。[落库与乱序合并](technical-design.md#逐指标读取与乱序合并)
 
 **请求。** GA-09 先经已授权的节点详情取得当前 incarnation，再从同源页面发送下列 GET。服务端逐次检查登录会话、租户成员资格、`node.read` 和目标节点授权，再核对必填的 `nodeIncarnation`。每次响应均带 `Cache-Control: private, no-store` 和本次请求的 `X-Trace-Id`。GA-10 从响应头读取追踪号，关联该次 GET 的控制面日志；错误体的 `traceId` 与响应头相同。
 
@@ -276,4 +280,4 @@ async function inspectNode(tenantId: string, nodeId: string, resourceVersion: st
 | `partial-collection`、`no-prior-sample`、`offline-after-good-sample` | 分别核对有效 CPU 零值与旧内存值、无历史值的显示、断线后保留的最后成功时刻。 |
 | `unauthorized-node` | 租户 B 的账户读取 A 的命令详情返回 `403 NODE_FORBIDDEN`，响应与页面均无 A 的样本。 |
 
-**验收边界。** GA-01 已验证公开向量及报文关联。历史记录覆盖 Go 1.27.4 与本地 workerd 1.20261119.1 的交叉验签和篡改单字节的拒绝。`npm run check:ga01` 复查样例的鉴权头、签名、摘要、报文方向、状态推进与异常预期。全链路授权、两项采集均失败的完整结果、断线重报等行为由 GA-10 在隔离 Worker/D1/DO 与两台 Linux 节点上取证。[研发计划](go-agent-development-plan.md) · [联调验收记录](spaces/implementation-review.md)
+**验收边界。** GA-01 已验证公开向量及报文关联。历史记录覆盖 Go 1.27.4 与本地 workerd 1.20261119.1 的交叉验签和篡改单字节的拒绝。`npm run check:ga01` 复查样例的鉴权头、签名、摘要、报文方向、状态推进与异常预期。全链路授权、两项采集均失败的完整结果、断线重报等行为由 GA-10 在隔离 Worker/D1/DO 与两台 Linux 节点上取证。[GA-10 验收条件](engineering-roadmap.md#ga-10-如何判断通过) · [联调验收记录](spaces/implementation-review.md)

@@ -12,16 +12,16 @@ Delegated implementation: build a static documentation site with Node.js and Mar
 
 ## Users
 
-The project team and public readers need to read, review, and reference the existing 1Panel v2 Cloudflare control-plane technical plan.
+Product, engineering and QA teams use the public site to agree on scope, implement the control plane, and review delivery evidence.
 
 ## Product Purpose
 
-Publish the full design version 2.5 as an accessible public documentation repository and static website in XCAngelWatch.
+Publish the product requirements, technical design and engineering roadmap together as an accessible engineering handbook.
 
 ## Capabilities and Constraints
 
-- Preserve all 15 chapters and appendices A–E from the supplied plan.
-- Keep the design baseline dated 2026-11-12 and distinguish it from the publication date of 2026-11-17.
+- Product readers choose scope and acceptance conditions in the PRD. Developers use the technical design, the node protocol and the operation permissions register to implement tasks assigned in the roadmap. Reference pages preserve full protocol vectors, source locations and evidence records.
+- Use docs/site-meta.json for the design baseline and document publication dates.
 - Preserve XC React reuse, the first-release Go core/agent retention, and the separate single-tenant 10,000-node acceptance gate.
 - Publication does not demonstrate that the platform or capacity tests have been implemented.
 - Remove machine-specific absolute paths and unavailable private embeds from the published artifact.
@@ -31,7 +31,7 @@ Publish the full design version 2.5 as an accessible public documentation reposi
 
 ## Evidence on Hand
 
-The complete current technical plan is the source document. The source repository and exact reviewed commit are referenced within that plan. No new source-code review or capacity testing is part of this publication task.
+The sources of record are indexed in docs/README.md. The technical specifications and operation ledger identify reviewed source commits. No new source-code review or capacity testing is part of this publication task.
 
 ## Open Decisions
 

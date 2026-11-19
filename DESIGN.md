@@ -19,7 +19,7 @@ typography:
     lineHeight: 1.95
   title:
     fontFamily: "-apple-system, BlinkMacSystemFont, Segoe UI, PingFang SC, sans-serif"
-    fontSize: "clamp(27px, 2.5vw, 38px)"
+    fontSize: "clamp(29px, 2.9vw, 42px)"
     fontWeight: 700
     lineHeight: 1.35
     letterSpacing: "-0.025em"
@@ -33,22 +33,22 @@ spacing:
   section: "36px"
 components:
   search-trigger:
-    backgroundColor: "#235058"
-    textColor: "#f5ffff"
+    backgroundColor: "#f3f7f7"
+    textColor: "#172f33"
     rounded: "6px"
-    padding: "10px 12px"
+    padding: "5px 10px"
   contents-active:
-    backgroundColor: "#f0f7f7"
-    textColor: "#163e44"
+    backgroundColor: "#285056"
+    textColor: "#ffffff"
     rounded: "{rounded.control}"
-    padding: "8px 11px"
+    padding: "8px 10px"
 ---
 
 # Design system
 
 ## Overview
 
-This is a documentation reading surface. A deep teal chapter rail holds navigation and search; a white article area keeps long Chinese prose, protocol diagrams, code and migration tables readable. The running header preserves repository and download access.
+The directory opens the five topic documents and links directly to their frequently used chapters. A disclosure holds source material and evidence records. A deep teal introduction shows the system boundary. On reading pages a chapter rail and white article column keep long Chinese prose, protocol diagrams and migration tables readable. The shared header holds search. Each article exposes its Markdown download and print action.
 
 ## Colors
 
@@ -60,11 +60,11 @@ Use the system Chinese reading stack for headings and prose. Monospace is limite
 
 ## Layout
 
-Desktop uses a 276 px chapter rail and a flexible reading area, with an article maximum width of 1000 px to accommodate technical tables. The rail is 292 px at 1500 px and above, 238 px at 1050 px and below. At 760 px and below it becomes an explicit menu. The header is 68 px high on desktop and 60 px on mobile. Wide tables and diagrams scroll within their own regions.
+Desktop uses a 252 px chapter rail and a flexible reading area, with an article maximum width of 1000 px to accommodate technical tables. The rail is 292 px at 1500 px and above, 238 px at 1050 px and below. At 760 px and below it becomes an explicit menu. The header is 68 px high on desktop and 60 px on mobile. Wide tables and diagrams scroll within their own regions.
 
 ## Components
 
-- The active chapter has a pale background and darker, heavier text; all entries remain normal document links.
+- The selected document has a pale background. A lighter teal surface indicates the current chapter. All entries remain normal document links.
 - Search opens a native dialog with labelled input, live result count, keyboard shortcut and explicit close control.
 - Code blocks have a copy action; diagrams expose their source as a fallback.
 - Tables use a restrained tinted header, alternating rows and tabular numerals.
@@ -73,7 +73,3 @@ Desktop uses a 276 px chapter rail and a flexible reading area, with an article 
 ## Motion
 
 The mobile directory transition is 180 ms ease-out. Reduced-motion preferences disable transitions and smooth scrolling. Content is visible without entrance animation.
-
-## Evidence
-
-The publication validation verified desktop and 390 × 844 mobile rendering, all eight diagrams, full-page overflow, search navigation and mobile chapter selection. Mechanical checks returned no findings. This record describes the documentation site only; it does not imply platform implementation or capacity acceptance.

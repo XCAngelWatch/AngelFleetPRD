@@ -1,17 +1,16 @@
-# AngelFleet PRD
+# AngelFleet 项目文档
 
-AngelFleet 在云端控制台集中管理选定的 1Panel 运维能力。首批验收节点接入、CPU 与内存概览及审计。Linux 节点继续复用现有 Go core/agent。
+AngelFleet 面向使用 1Panel 的 Linux 运维团队。首批计划在 AngelFleetConsole 中交付节点接入、CPU 与内存概览和访问审计。当前已验证 GA-01 契约与样例，双租户真机联调和单租户万节点容量测试待执行。
 
-**[产品 PRD](https://xcangelwatch.github.io/AngelFleetPRD/product-prd.html) · [本期功能导图](https://xcangelwatch.github.io/AngelFleetPRD/1panel-feature-map.html) · [首批排期与甘特图](https://xcangelwatch.github.io/AngelFleetPRD/go-agent-development-plan.html#m1-排期与甘特图) · [三批派工总览](https://xcangelwatch.github.io/AngelFleetPRD/go-agent-development-plan.html#三批派工总览)**
-
-| 阅读目的 | 入口 |
+| 文档 | 阅读目的 |
 |---|---|
-| 确认首批交付与延期范围 | [产品 PRD](docs/product-prd.md) |
-| 确认架构、里程碑和当前可领任务 | [主方案](https://xcangelwatch.github.io/AngelFleetPRD/) · [研发计划](https://xcangelwatch.github.io/AngelFleetPRD/go-agent-development-plan.html) |
-| 实现调用链、核对注册、建连与采样报文 | [技术详细设计](https://xcangelwatch.github.io/AngelFleetPRD/technical-design.html) · [节点契约](https://xcangelwatch.github.io/AngelFleetPRD/go-agent-interface-contract.html) |
-| 查 Go 入口、核对操作范围、登记真机证据 | [Go 操作台账](https://xcangelwatch.github.io/AngelFleetPRD/operation-ledger.html) · [联调验收记录](https://xcangelwatch.github.io/AngelFleetPRD/implementation-review.html) |
+| [产品 PRD](docs/product-prd.md) | 按用户流程确认试点体验，按 11 个功能域选择范围，逐项核对验收与开放条件。 |
+| [技术方案](docs/technical-design.md) | 按组件确定数据归属、命令交付、故障恢复、安全与容量验证。 |
+| [节点接入与接口契约](docs/go-agent-interface-contract.md) | 按实际报文实现设备注册、WSS 握手、首次采样与逐指标读回。 |
+| [节点操作与权限](docs/operation-ledger.md) | 按操作核对角色、目标、Go 入口、取消边界和真实资源验收。 |
+| [研发计划](docs/engineering-roadmap.md) | 查 M1 甘特图，按 35 项工单的角色、依赖、估算与交付证据派工，按阶段决定放行。 |
 
-维护者按[文档目录](docs/README.md)定位要修改的源文件。网页、全文搜索、Markdown 下载和打印视图共用同一份正文。
+[文档站首页](https://xcangelwatch.github.io/AngelFleetPRD/) · [原始资料与维护位置](docs/README.md)
 
 ## 本地构建
 
@@ -25,6 +24,8 @@ npm run preview
 ```
 
 随后访问 `http://localhost:4173`。`npm run check` 检查全部章节、锚点、站内资源、公开引用和关键范围，确保站点与 Markdown 内容一致。
+
+在装有 Python 3 的 macOS 或 Linux 上运行 `npm run offline` 会重新构建、校验并输出 `dist/AngelFleet-docs-v版本-日期.zip`。解压后双击 `index.html` 即可离线阅读、搜索及查看流程图。
 
 ## 部署
 

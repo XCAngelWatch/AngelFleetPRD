@@ -9,23 +9,41 @@ const records = JSON.parse(document.querySelector('#search-data').textContent);
 const escapeHtml = value => value.replace(/[&<>"']/g, ch => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[ch]));
 let previousFocus;
 
+// Old public bookmarks still resolve after the handbook split.
+const movedSections = JSON.parse(document.querySelector('#moved-sections').textContent);
+function followMovedSection() {
+  let id;
+  try { id = decodeURIComponent(location.hash.slice(1)); } catch { return; }
+  const target = Object.hasOwn(movedSections, id) && movedSections[id];
+  if (target) { location.replace(target); return; }
+  const roles = document.getElementById(id)?.closest('details.role-table');
+  if (roles && !roles.open) {
+    roles.open = true;
+    document.getElementById(id).scrollIntoView();
+  }
+}
+followMovedSection();
+window.addEventListener('hashchange', followMovedSection);
+
 function setMenu(open) {
+  if (!sidebar) return;
   sidebar.classList.toggle('is-open', open);
   menuButton.setAttribute('aria-expanded', String(open));
   backdrop.hidden = !open;
-  if (open) sidebar.querySelector('button').focus();
+  if (open) (sidebar.querySelector('[aria-current="page"]') ?? sidebar.querySelector('a')).focus();
 }
-menuButton.addEventListener('click', () => setMenu(!sidebar.classList.contains('is-open')));
-backdrop.addEventListener('click', () => setMenu(false));
-sidebar.querySelectorAll('a').forEach(link => link.addEventListener('click', () => setMenu(false)));
+menuButton?.addEventListener('click', () => setMenu(!sidebar.classList.contains('is-open')));
+backdrop?.addEventListener('click', () => { setMenu(false); menuButton.focus(); });
+sidebar?.querySelectorAll('a').forEach(link => link.addEventListener('click', () => setMenu(false)));
+matchMedia('(max-width: 760px)').addEventListener('change', () => setMenu(false));
 document.addEventListener('keydown', event => {
-  if (event.key === 'Escape' && sidebar.classList.contains('is-open')) { setMenu(false); menuButton.focus(); }
+  if (event.key === 'Escape' && sidebar?.classList.contains('is-open')) { setMenu(false); menuButton.focus(); }
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); openSearch(); }
 });
 
 function openSearch() {
   if (dialog.open) return;
-  previousFocus = sidebar.classList.contains('is-open') ? menuButton : document.activeElement;
+  previousFocus = sidebar?.classList.contains('is-open') ? menuButton : document.activeElement;
   setMenu(false);
   dialog.showModal();
   searchInput.focus();
@@ -46,7 +64,8 @@ searchInput.addEventListener('input', () => {
   if (!query) { results.replaceChildren(); status.textContent = '输入关键词查找章节、功能和协议。'; return; }
   const needle = query.toLowerCase();
   const matches = records.filter(record => (record.title + ' ' + record.text).toLowerCase().includes(needle));
-  matches.sort((a,b) => Number(b.title.toLowerCase().includes(needle)) - Number(a.title.toLowerCase().includes(needle)));
+  const rank = record => 2 * Number(record.title.toLowerCase().includes(needle)) + Number(record.primary);
+  matches.sort((a,b) => rank(b) - rank(a));
   status.textContent = matches.length ? `找到 ${matches.length} 个相关段落${matches.length > 30 ? '，显示前 30 个' : ''}` : '没有找到匹配内容，试试“Go”“租约”或“10000”。';
   results.innerHTML = matches.slice(0,30).map(record => {
     const hit = record.text.toLowerCase().indexOf(needle);
@@ -59,7 +78,7 @@ searchInput.addEventListener('input', () => {
 });
 results.addEventListener('click', event => { if (event.target.closest('a')) dialog.close(); });
 
-const chapterLinks = new Map([...document.querySelectorAll('.toc a')].map(link => [link.hash.slice(1),link]));
+const chapterLinks = new Map([...document.querySelectorAll('.toc a')].map(link => [decodeURIComponent(link.hash.slice(1)),link]));
 const headings = [...document.querySelectorAll('.chapter')];
 let scrollPending = false;
 function updateLocation() {
@@ -73,7 +92,7 @@ function updateLocation() {
 window.addEventListener('scroll', () => { if (!scrollPending) { requestAnimationFrame(updateLocation); scrollPending = true; } }, {passive:true});
 updateLocation();
 document.querySelector('.back-top').addEventListener('click', () => { window.scrollTo({top:0,behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth'}); });
-document.querySelector('.print-button').addEventListener('click', event => { event.preventDefault(); window.print(); });
+document.querySelector('.print-button')?.addEventListener('click', event => { event.preventDefault(); window.print(); });
 
 function drawFeatureLinks(canvas, phases) {
   const layer = canvas.querySelector('.feature-links');
@@ -274,8 +293,19 @@ async function renderDiagrams() {
   const nodes = [...document.querySelectorAll('.mermaid')];
   if (!nodes.length) return;
   try {
-    const {default: mermaid} = await import('./mermaid.js');
-    mermaid.initialize({startOnLoad:false, securityLevel:'strict', theme:'base', fontFamily:'-apple-system, BlinkMacSystemFont, PingFang SC, Microsoft YaHei, sans-serif', themeVariables:{primaryColor:'#e4f0f1',primaryTextColor:'#173b40',primaryBorderColor:'#85a9ad',lineColor:'#48767b',secondaryColor:'#eef4f4',tertiaryColor:'#f7f8f3'}, flowchart:{useMaxWidth:true,htmlLabels:false}, sequence:{useMaxWidth:true,wrap:true}});
+    // An unpacked file:// handbook loads its diagram library as a classic script.
+    const offlineLibrary = document.querySelector('script[data-diagram-library]')?.dataset.diagramLibrary;
+    if (offlineLibrary) {
+      await new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.onload = resolve;
+        script.onerror = reject;
+        script.src = offlineLibrary;
+        document.head.append(script);
+      });
+    }
+    const {default: mermaid} = offlineLibrary ? window.AngelFleetDiagrams : await import('./mermaid.js');
+    mermaid.initialize({startOnLoad:false, securityLevel:'strict', htmlLabels:false, look:'classic', theme:'base', fontFamily:'-apple-system, BlinkMacSystemFont, PingFang SC, Microsoft YaHei, sans-serif', themeVariables:{primaryColor:'#e4f0f1',primaryTextColor:'#173b40',primaryBorderColor:'#85a9ad',lineColor:'#48767b',secondaryColor:'#eef4f4',tertiaryColor:'#f7f8f3'}, flowchart:{useMaxWidth:true,wrappingWidth:180,rankSpacing:36}, sequence:{useMaxWidth:true,wrap:true}});
     let openViewer;
     for (const node of nodes) {
       try {
