@@ -73,6 +73,10 @@ assert(source.includes(`设计版本 ${siteMeta.version} · 实施状态：实�
 const pageIds = new Map();
 for (const page of pages) {
   assert.deepEqual(readSearchData(page.html),searchData,`Site-wide search index mismatch in ${page.file}`);
+  const switcher = page.html.match(/<nav class="page-nav"[^>]*>([\s\S]*?)<\/nav>/)?.[1] ?? '';
+  const destinations = [...switcher.matchAll(/<a href="([^"]+)"([^>]*)>/g)];
+  assert.deepEqual(destinations.map(([,href]) => href).sort(), Object.keys(expectedDownloads).sort(), `Document switcher on ${page.file}`);
+  assert.deepEqual(destinations.filter(([, ,attrs]) => attrs.includes('aria-current="page"')).map(([,href]) => href), [page.file], 'Expected exactly one current document');
   const ids = [...page.html.matchAll(/\bid="([^"]+)"/g)].map(match => match[1]);
   const unique = new Set(ids);
   assert.equal(ids.length,unique.size,`Duplicate element IDs in ${page.file}`);
@@ -119,8 +123,25 @@ for (const [file, peers] of [
   }
 }
 const development = byFile.get('go-agent-development-plan.html');
-const taskIds = [...development.source.matchAll(/^\| (GA-\d+) /gm)].map(match => match[1]);
-assert(taskIds.length > 0,'Expected assignable Go Agent tasks');
+const taskRows = [...development.source.matchAll(/^\| (GA-\d+) [^|]+\| ([^|]+) \|/gm)];
+const taskIds = taskRows.map(([,id]) => id);
+const gaId = number => 'GA-' + String(number).padStart(2, '0');
+assert.deepEqual(taskIds, Array.from({length:19}, (_, i) => gaId(i + 1)), 'Expected one dispatch row for each GA-01 through GA-19');
+const dependencies = new Map(taskRows.map(([,id,prerequisites]) => {
+  const refs = new Set(prerequisites.match(/GA-\d+/g) ?? []);
+  for (const [,first,last] of prerequisites.matchAll(/GA-(\d+) 至 GA-(\d+)/g)) {
+    assert(Number(first) <= Number(last), `Reversed dependency range for ${id}`);
+    for (let n = Number(first); n <= Number(last); n++) refs.add(gaId(n));
+  }
+  for (const ref of refs) assert(taskIds.includes(ref), `Unknown prerequisite for ${id}: ${ref}`);
+  return [id, refs];
+}));
+const resolved = new Set();
+while (resolved.size < dependencies.size) {
+  const ready = taskIds.filter(id => !resolved.has(id) && [...dependencies.get(id)].every(ref => resolved.has(ref)));
+  assert(ready.length, 'Go Agent task dependencies contain a cycle');
+  ready.forEach(id => resolved.add(id));
+}
 for (const taskId of taskIds) {
   const anchor = taskId.toLowerCase();
   assert(pageIds.get(development.file).has(anchor),`Missing shareable task anchor: ${taskId}`);
@@ -187,6 +208,19 @@ assert(acceptanceIds.length > 0,'Acceptance ID registry must not be empty');
 assert.equal(new Set(acceptanceIds).size,acceptanceIds.length,'Acceptance ID registry contains duplicate IDs');
 const acceptanceIdSet = new Set(acceptanceIds);
 const acceptancePattern = /\b(?:AC|FI|CAP|NET)-[A-Z0-9]+\b|\bP\d+-AC\b|\bDEV\d+\b/g;
+const requirementMatrix = source.split('## D.3 ')[1]?.split(/^##? /m)[0] ?? '';
+const mappedEvidence = new Set();
+const requirementRows = [...requirementMatrix.matchAll(/^\| (REQ\d+) [^\n]+/gm)];
+assert.deepEqual(requirementRows.map(([,id]) => id), reqNumbers.map(n => 'REQ' + String(n).padStart(2,'0')), 'The traceability matrix must cover every requirement once');
+for (const [row, id] of requirementRows) {
+  const evidenceColumn = row.trim().split('|').at(-2);
+  const evidence = evidenceColumn.match(acceptancePattern) ?? [];
+  assert(evidence.length, `Missing acceptance evidence in matrix row ${id}`);
+  evidence.forEach(ref => mappedEvidence.add(ref));
+}
+for (const [id, entry] of Object.entries(acceptanceRegistry.ids)) {
+  if (['AC','FI','CAP','NET'].includes(entry.family)) assert(mappedEvidence.has(id), `No requirement mapped to ${id} in D.3`);
+}
 const referencedAcceptanceIds = new Set(source.match(acceptancePattern) || []);
 for (const id of new Set(markdownSources.match(acceptancePattern) || [])) assert(acceptanceIdSet.has(id),`Acceptance ID is not registered: ${id}`);
 for (const id of acceptanceIds) if (acceptanceRegistry.ids[id].requiredUsage !== false) assert(referencedAcceptanceIds.has(id),`Registered acceptance ID is not referenced: ${id}`);

@@ -1,43 +1,19 @@
 # AngelFleet PRD 文档目录
 
-这是公开 PRD 的结果目录。修改源文件后运行 `npm run build`，生成结果统一写入 `dist/`；不要直接编辑 `dist/`。
+开发或测试接单先打开[在线研发计划](https://xcangelwatch.github.io/AngelFleetPRD/go-agent-development-plan.html)，按 GA 编号找到主责、前置和完成判据。维护文档时按下表修改对应正文，其他页面引用该处。
 
-向研发或测试同事分享工作包时，直接发送[研发计划阅读页](https://xcangelwatch.github.io/AngelFleetPRD/go-agent-development-plan.html)。页面间可以跳转到对应设计、Go 台账、接口契约和联调验收记录。
-
-| 文件 | 用途 | 权威性 |
+| 目录 | 问题 | 维护位置 |
 |---|---|---|
-| [technical-plan.md](technical-plan.md) | 完整 15 章与 A–E 附录；设计决策、迁移范围和验收摘要 | 主文档 |
-| [technical-design.md](technical-design.md) | 1Panel 固定提交的源码入口、节点采样、命令执行与结果对账、联调场景 | 源码事实链接到对应提交，目标契约与验收条件沿用主方案 |
-| [go-agent-development-plan.md](go-agent-development-plan.md) | 三仓库基线、节点端任务、里程碑、依赖和人日估算 | Go Agent 开发派工与验收计划 |
-| [go-agent-interface-contract.md](go-agent-interface-contract.md) | GA-01 的代码仓库与目录、节点注册、建连与首次采样接口 | Go 与控制台联调契约；[JSON 示例](examples/go-agent-first-sample.json)关联完整请求、响应与消息 |
-| [spaces/implementation-review.md](spaces/implementation-review.md) | 工程协作页的 GitHub 版本，按工作包整理实施边界与验收证据 | 开发与测试的评审工作页 |
-| `platform-constraints.md` | Cloudflare Workers、D1、DO、Queues、R2 的平台约束快照和官方来源 | 平台数字唯一集中来源 |
-| `angelfleetprd-threat-model.md` | 当前静态发布链与目标控制面的威胁模型 | 安全设计输入，非运行证明 |
-| `command-state.json` | 命令状态集合和 39 条允许转移 | 状态机唯一机器来源 |
-| `acceptance-ids.json` | AC/FI/CAP/NET/DEV/P6 验收编号注册表 | 验收编号唯一机器来源 |
-| [operation-ledger.md](operation-ledger.md) | Go 操作入口、适配边界和验收证据台账 | P0 起始台账 |
-| `site-meta.json` | 版本、发布状态和构建元数据 | 站点元数据唯一来源 |
+| 范围与排期 | 首版交付什么，哪些能力另立版本？ | [主方案](technical-plan.md)维护产品与架构决策、P0–P6 整版路线、协议通则和发布门禁。附录 B 记录全量迁移范围，C.2 登记已确定的操作。 |
+| 范围与排期 | 谁接单，能否并行，完成如何判断？ | [Go Agent 研发计划](go-agent-development-plan.md)维护 M1–M4、GA-01 至 GA-19、依赖与人日估算。 |
+| 实现设计 | 控制台、云端和本机如何调用，在哪一步落盘？ | [技术详细设计](technical-design.md)维护跨组件调用顺序和故障恢复边界。 |
+| 实现设计 | Go 与控制面交换什么，代码放在哪里？ | [GA-01 节点契约](go-agent-interface-contract.md)维护下游仓、模块、注册到首次采样的线协议；完整报文维护在[联调样例 JSON](examples/go-agent-first-sample.json)。 |
+| 操作与验收 | 某一操作复用哪段 1Panel 源码，要补哪些本地能力？ | [Go 操作台账](operation-ledger.md)维护登记操作的适配和核验入口，以及带版本的源码证据。 |
+| 操作与验收 | 哪些场景已在真机执行，证据在哪里？ | [联调验收记录](spaces/implementation-review.md)维护用例、实际观察值、运行编号及证据链接。 |
 
-## 发布结果目录
+## 规则、编号与发布
 
-`dist/` 是 GitHub Pages 的唯一发布目录，由构建脚本生成，包含：
-
-- `index.html`、`technical-design.html`、`go-agent-development-plan.html`、`go-agent-interface-contract.html`、`operation-ledger.html`、`implementation-review.html` 为六份文档的阅读页。
-- `technical-plan.md`、`technical-design.md`、`operation-ledger.md`、`platform-constraints.md`、`angelfleetprd-threat-model.md`：可下载的源文档副本。
-- `go-agent-development-plan.md` 和 `spaces/implementation-review.md` 保留源目录结构，便于从开发任务跳转到验收记录。
-- `go-agent-interface-contract.md` 和 `examples/go-agent-first-sample.json` 可从节点接口契约页下载。
-- `command-state.json`、`acceptance-ids.json`：可下载的机器可读契约。
-- `build-manifest.json`：源文件哈希、章节、图表、搜索记录和验收编号计数。
-- `robots.txt`、`sitemap.xml`：公开站点索引信息。
-
-## 推荐阅读顺序
-
-1. [主方案](technical-plan.md)：先看执行摘要、一页架构总览、§1、§5、§14。
-2. [架构图索引](technical-plan.md)：按问题进入部署、数据、命令、终端、迁移和容量图。
-3. [平台约束](platform-constraints.md)：确认 Cloudflare 数字的来源、日期和待验证状态。
-4. [协议与状态](technical-plan.md)：进入附录 A，实现注册、命令、终端和文件链路。
-5. [迁移台账](operation-ledger.md) 与主方案附录 B：逐项处理 Go 入口和真实功能。
-6. [威胁模型](angelfleetprd-threat-model.md)：按攻击面和证据缺口安排安全验收。
-7. [机器契约](command-state.json) 与 [验收注册表](acceptance-ids.json)：在 CI 和实施工具中消费。
-
-开发人员可从 [Go Agent 研发计划](go-agent-development-plan.md)领取工作包，在[技术详细设计](technical-design.md)核对调用链，联调时将实测结果登记到[工程协作页](spaces/implementation-review.md)。
+- 新增或修改命令状态时，更新[命令状态定义](command-state.json)与主方案 A.5 的状态图；构建检查逐条对照转移。
+- 验收编号在[验收注册表](acceptance-ids.json)登记；主方案附录 D 把需求关联到验收包，派工单引用相应编号。
+- 平台限制、取证日期和官方出处集中在[平台约束快照](platform-constraints.md)。安全边界与待验证项见[威胁模型](angelfleetprd-threat-model.md)。
+- [站点元数据](site-meta.json)记录设计版本与发布状态。按[仓库构建说明](../README.md#本地构建)生成 `dist/`，其中 `build-manifest.json` 可核对六个阅读页、源文件哈希与搜索索引。

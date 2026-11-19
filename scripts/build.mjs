@@ -122,7 +122,12 @@ const documents = await Promise.all([
   readDocument('operation-ledger.md', 'operation-ledger.html', 'Go 操作台账', '查阅节点操作对应的 1Panel 源码、适配范围、互斥与结果核验方式。'),
   readDocument('spaces/implementation-review.md', 'implementation-review.html', '联调验收记录', '按工作包核对节点注册与采样、OpenResty 重启、网站备份及恢复的真机联调场景与实测记录。')
 ]);
-const [plan, design, contract] = documents;
+const [plan, design, contract, development, ledger, review] = documents;
+const navigationGroups = [
+  {label: '范围与排期', pages: [plan, development]},
+  {label: '实现设计', pages: [design, contract]},
+  {label: '操作与验收', pages: [ledger, review]}
+];
 const sampleFile = 'examples/go-agent-first-sample.json';
 const supportingDocs = ['platform-constraints.md','angelfleetprd-threat-model.md','go-agent-development-plan.md','spaces/implementation-review.md',sampleFile];
 const searchRecords = documents.flatMap(doc => doc.records.map(record => ({...record, label:doc.label})));
@@ -170,7 +175,19 @@ function renderPage(doc) {
   const canonical = doc === plan ? site : site + doc.file;
   const chapters = doc.sections.filter(({heading}) => !heading.title.startsWith('附录'));
   const appendices = doc.sections.filter(({heading}) => heading.title.startsWith('附录'));
-  const pageNav = documents.map(page => `<a href="${page.file}"${page === doc ? ' aria-current="page"' : ''}>${page.label}</a>`).join('');
+  const pageNav = navigationGroups.map(({label, pages}) => {
+    const links = pages.map(page => `<a href="${page.file}"${page === doc ? ' aria-current="page"' : ''}>${escape(page.label)}</a>`).join('');
+    return `<div class="nav-group" role="group" aria-label="${label}"><span class="nav-label" aria-hidden="true">${label}</span><div class="page-nav-links">${links}</div></div>`;
+  }).join('');
+  const planChapterGroups = new Map([
+    ['section-1', '架构与交付范围'],
+    ['section-6', '数据、协议与运行'],
+    ['section-13', '迁移与验收']
+  ]);
+  const chapterNav = chapters.map(chapter => {
+    const group = doc === plan && planChapterGroups.get(chapter.heading.id);
+    return (group ? `<span class="toc-label">${group}</span>` : '') + chapterLink(chapter);
+  }).join('');
   return `<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -192,15 +209,14 @@ function renderPage(doc) {
   <aside class="sidebar" id="contents" aria-label="章节目录">
     <button class="search-trigger" type="button">${searchIcon}<span>搜索方案</span><kbd>⌘ / Ctrl K</kbd></button>
     <nav class="page-nav" aria-label="文档切换">${pageNav}</nav>
-    <h2 class="contents-title">本页章节</h2><nav class="toc" aria-label="主体章节">${chapters.map(chapterLink).join('')}</nav>
+    <h2 class="contents-title">本页章节</h2><nav class="toc" aria-label="主体章节">${chapterNav}</nav>
     ${appendices.length ? `<h2 class="contents-title">参考附录</h2><nav class="toc" aria-label="附录">${appendices.map(chapterLink).join('')}</nav>` : ''}
     <div class="sidebar-footer">设计版本 · ${escape(siteMeta.version)}<br>发布状态 · ${escape(siteMeta.status)}<br><a href="${markdown}" download>下载${label}</a></div>
   </aside>
   <main class="article-wrap" id="main">
     <article class="document">
-      <header class="document-header"><div class="breadcrumb"><a href="index.html">AngelFleet PRD</a> / ${label}</div><h1>${escape(title)}</h1><div class="document-meta"><span>设计版本 ${escape(siteMeta.version)}</span><span class="design-status">${escape(siteMeta.status)}</span></div></header>
+      <header class="document-header"><div class="breadcrumb"><a href="index.html">AngelFleet PRD</a> / ${label}</div><h1>${escape(title)}</h1>${doc === plan ? '' : `<div class="document-meta"><span>设计版本 ${escape(siteMeta.version)}</span><span class="design-status">${escape(siteMeta.status)}</span></div>`}</header>
       <div class="intro">${renderGroup(doc.intro, doc)}</div>
-      ${doc === plan ? `<div class="publication-note">这是公开设计方案，状态为“${escape(siteMeta.status)}”。方案公开不代表平台功能、真实节点链路或单租户容量验收已完成。</div>` : ''}
       ${doc.sections.map(section => `<section class="chapter" id="chapter-${section.heading.id}" aria-labelledby="${section.heading.id}">${renderGroup(section, doc)}</section>`).join('\n')}
       <footer class="document-footer"><span>AngelFleet PRD · 设计版本 ${escape(siteMeta.version)}</span><span><a href="${markdown}" download>下载 Markdown</a> · <a href="${repo}/blob/main/docs/${markdown}">查看源文档</a> · <a href="#top">返回文档开头</a></span></footer>
     </article>

@@ -1,6 +1,6 @@
 # 技术详细设计
 
-操作员在 AngelFleetConsole（文中简称 XC 控制台）重启一个已安装的 OpenResty 实例，浏览器随即断线。恢复连接后，任务中心怎样找到原命令，又能凭什么证据判断该实例确实重启过？本页以控制台已有的身份、审计接口和 1Panel 的 Go 执行入口为依据。节点注册、控制连接、云端命令、本地 journal 及其联合验收均属待实施范围。[Go Agent 研发计划](go-agent-development-plan.md)
+以一次 OpenResty 重启为例，从服务详情页跟到租户收据、节点 journal、Go 执行和结果对账。当前 AngelFleetConsole 已有身份与审计，1Panel 已有本机执行入口。两端之间的注册、控制连接与命令链路待实施。开发首次节点接入直接查 GA-01 的接口和消息，复核代码位置查操作台账。[GA-01 联调契约](go-agent-interface-contract.md) · [Go 操作台账](operation-ledger.md)
 
 # 1. 从服务详情页提交重启
 
@@ -99,7 +99,7 @@ sequenceDiagram
 | 操作员的节点授权被撤销 | 重试提交和详情查询均重新校验当前权限。节点按已获知的撤销信息拒绝新启动。尚可信的节点身份可继续回传已执行任务的受限结果 | 已撤权的操作员看到访问被拒。仍有权限的审计人员能核对原任务、提交人和结果 |
 | 合并结果的回执丢失，或人工结论之后收到矛盾结果 | 重送同一事件。TenantData 比对事件标识、序号、摘要和当前结论，一致时回复已合并的 revision，矛盾时保留冲突证据 | 人工结论保留，冲突追加到审计。`CONFLICT` 属于事件处理结果，任务中心继续显示已裁决的命令状态 |
 
-原 Go 实现先调用 `compose.Restart`，成功后才调用 `syncAppInstallStatus`。后者在连接 Docker 或读取容器列表时仍可能返回错误。因此，状态刷新报错后应保留 Compose 的执行记录，按原命令核对现场。已知 journal 丢失的节点走身份恢复流程，换用新密钥和 incarnation，原命令保留待核对。[重启与状态同步调用顺序](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/service/app_install.go#L316-L321) · [容器状态读取错误](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/service/app_install.go#L1199-L1216)
+`syncAppInstallStatus` 在 Compose 重启后读取容器状态，该查询仍可能报错。journal 丢失时，节点通过身份恢复换用新密钥和 incarnation，原命令保留待核对。[重启与状态同步调用顺序](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/service/app_install.go#L316-L321) · [容器状态读取错误](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/service/app_install.go#L1199-L1216)
 
 进入 `REVIEW_REQUIRED` 后，由具备处置权限的人员记录证据、时间和结论。仍缺证据时继续保留该状态。另行批准重新执行时，创建关联原任务的新命令并复核目标版本。[主方案 §7.2 断线后的任务对账](technical-plan.md#72-断线后的任务对账) · [命令状态与允许转移](command-state.json)
 
@@ -132,7 +132,7 @@ sequenceDiagram
 
 ## 5.1 节点注册后恢复原身份
 
-节点在本地生成密钥，通过 `POST /v1/agents/enroll` 提交一次性注册凭据并证明持有私钥。TenantData 在同一租户 D1 事务中消费凭据、绑定预登记节点与公钥并写入审计。若注册响应丢失，节点提供原 `requestId` 和原公钥，用对应的私钥签署新的一次性挑战。服务端核对签名与原消费记录后返回同一节点身份。建链时再申请 `connect-ticket` 并主动连接 AgentConn，只有节点持久化新 epoch 且 `ready` 被接受后才可投递命令。[主方案 §7.1 节点注册与身份建立](technical-plan.md#71-节点注册与身份建立)
+TenantData 在一个租户事务中消费一次性票据、绑定预登记节点与设备公钥、写入成功审计。提交后丢失响应时，原设备保留 `requestId`，用原私钥签署新挑战以找回原身份。随后按 `connect-ticket → hello → welcome → ready → ready.ack` 建连，Go 必须在发送 `ready` 前持久化新 epoch。AgentConn 激活后可投递首条 `node.inspect`。[GA-01 请求、响应和消息样例](go-agent-interface-contract.md)
 
 ## 5.2 由终端执行器关停会话
 
@@ -144,27 +144,13 @@ sequenceDiagram
 
 # 6. 联调场景与交付证据
 
-准备两个租户和两台预登记的 Linux 测试节点。先完成注册，再在两台节点分别准备可重启的 OpenResty 安装实例，均使用别名 `website-proxy`。记录各自的节点 incarnation、安装 ID、资源版本、预期容器集合和启动时间。至少一个操作员可管理原目标并能切换到另一个合法上下文。终端测试需要可检查关闭状态的 PTY，文件测试使用已知整文件摘要的多分片制品。以下场景均待执行。
+真机按三个工作包执行。注册和采样核对消费、连接代次与样本来源。重启故障分别注入在云端受理、Go 启动和节点结果投递处。备份与恢复核对独立任务、业务记录及归档或目标数据。每个断点的预期状态、实际调用次数、脱敏证据和待填结论统一记在联调页。[联调场景与实测记录](spaces/implementation-review.md#实测记录)
 
-| 验收项 | 操作与故障时点 | 通过条件 |
-|---|---|---|
-| AC-CMD、NET-CMD | 重启原节点的 OpenResty 安装实例，查询到终态 | 一条命令对应一次 Compose 重启动作。原实例的预期容器启动时间改变，版本及运行状态符合预期，另一节点实例保持原状。D1 事件、journal 与现场证据可按同一命令串联 |
-| FI-CMD | 在 D1 提交后丢弃 HTTP 响应，以同 key 和原请求重发。另用同 key 更换服务名重发 | 第一次重试回放同一 `commandId`，第二次重试得到请求指纹冲突。核对收据与实际启动记录，均只对应一次原始操作 |
-| FI-CMD、AC-CMD | 在 Compose 已启动、结果尚未落盘时停止测试 connector，恢复后分别提供完整和缺失的容器证据 | 完整证据可还原实际结果。缺失证据进入未知或人工核对。两组都保留原 `commandId`，恢复后均无第二次启动记录 |
-| FI-CMD | 丢弃首次受理响应。执行器尚未启动时，将别名改绑到同节点的另一实例。以原版本、请求体和 key 重试 | 回放原 `commandId`、期限与安装绑定。执行器持锁复核后记录目标变更和未启动证据，原命令进入 `REJECTED`，两个实例的重启次数均为零 |
-| FI-APP、FI-CMD | 用测试适配器让 Compose 完成一次重启，再让随后的容器状态查询返回错误。分别用证据完整和故意缺少启动证据的样本对账 | 完整样本保留原始错误，以操作标记、原容器集合和启动时间核实后可记为 `SUCCEEDED`。缺证样本须查到原 `commandId`，实测状态为 `UNCERTAIN`。两组均须核实原命令的 Compose 重启入口在对账前后各累计调用一次，增量为零。漏采计数时填「待核对」 |
-| AC-CMD、FI-CMD | 两次独立运行分别让取消先于 `beginDispatch` 胜出、让重启先于取消生效但延后上报结果 | 第一组为 `CANCELLED`，无投递和重启记录。第二组保留取消记录。收到可核实的完成事件后为 `SUCCEEDED`、`cancelIneffective=true`，只有一次重启 |
-| AC-AUTH、FI-AUTH | 完成一次提交后撤销操作员对该节点的访问，重新打开详情并用原 key 重试 | 两次访问均被拒。授权审计人仍能核验原命令与执行结果，没有新增命令 |
-| AC-UI | 在原节点提交后切换到另一合法节点，延迟交付旧查询响应，再刷新原任务深链接 | 目标节点的同名服务保持自身数据，原任务在重新鉴权后可见，状态按 revision 单调更新 |
-| DEV02、NET-REG | 在注册事务提交后丢弃响应，用原请求标识、公钥和新挑战的签名恢复 | 返回原 `nodeId` 与 incarnation，节点绑定及成功消费审计各一份。随后以该身份完成连接与 `ready` 握手 |
-| AC-TERM、FI-LEASE | 撤销活动终端，分别在通知可达和丢失时记录 D1 提交、Relay 停止收发和本地 PTY 关闭时间 | 收到撤销的端点立即关停。未获通知的端点按绝对租约到期关停。旧授权版本无法续租，两种情况下均可核验 PTY 已关闭 |
-| AC-FILE、FI-FILE | 完成多分片上传后丢弃响应，按同一 `artifactId` 和清单重提。另用预期摘要不匹配的制品复测 | 重试指向同一制品及对象版本。只有整文件摘要核验通过的制品可进入 `READY`，失败样本不会分发安装命令 |
-
-每次运行把代码与构建版本、节点环境、原始断点、期望与实际结果写入同一 `runId`。用 `traceId` 串联请求及链路日志，用 `commandId` 串联租户命令、节点 journal 和 Go 执行证据。单独标明直连投递或 outbox 补偿。单租户 10,000 节点、连续 72 小时的混合负载按 CAP-01 独立执行。[验收编号注册表](acceptance-ids.json) · [主方案 §15.1 单租户容量与证据门禁](technical-plan.md#151-单租户容量与证据门禁)
+终端与制品另验租约撤销、PTY 关闭和分片摘要。容量测试按 CAP-01 独立运行单租户 10,000 节点、连续 72 小时的混合负载。[验收编号注册表](acceptance-ids.json) · [主方案 §15.1 容量门禁](technical-plan.md#151-单租户容量与证据门禁)
 
 # 7. 1Panel 源码与适配位置
 
-本次核对的上游是 2026 年 11 月 18 日的 `dev-v2` 提交 `aaba86d`。它比主方案附录 B 的全量迁移基线 `cedb8dd` 前进 38 个提交。以下结论覆盖启动与数据归属、仪表盘采样、已安装 OpenResty 重启及网站备份。其他路由组仍按附录 B 的基线追踪。[本次源码树](https://github.com/1Panel-dev/1Panel/tree/aaba86d0ef71a31ee319e74998ffe83c64abf4b6) · [两个基线之间的变更](https://github.com/1Panel-dev/1Panel/compare/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633...aaba86d0ef71a31ee319e74998ffe83c64abf4b6)
+首批适配基于 1Panel `dev-v2@aaba86d`。迁移矩阵保留 `cedb8dd` 的全量基线，两次提交之间的 38 个变更及其对首批操作的影响可在台账追溯。[源码版本与改造影响](operation-ledger.md#从迁移基线到当前节点代码)
 
 ## 7.1 进程、路由与本地数据
 
@@ -187,11 +173,9 @@ flowchart LR
 
 ## 7.2 节点采样怎样进入 XC 仪表盘
 
-节点概览调用 `GET /api/v2/dashboard/current/node`。`LoadCurrentInfoForNode` 返回 `NodeCurrent`，字段覆盖 CPU、负载、内存和交换空间，适配器需在采样点补时间。Vue 首页的速率曲线调用 `GET /api/v2/dashboard/current/:ioOption/:netOption`。磁盘和网卡选择器经 `LoadDashboardCurrentInfo` 传给 `DashboardService.LoadCurrentInfo`，返回的 `DashboardCurrent` 含 `shotTime`、`netBytesSent`、`netBytesRecv`、`ioReadBytes` 和 `ioWriteBytes`。四个字节字段均为累计计数。主机信息读取失败时，即使带有 `shotTime`，这些计数也可能保留零值。[两条 agent 路由](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/router/ro_dashboard.go#L25-L26) · [两类返回字段](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/dto/dashboard.go#L79-L151) · [首页请求](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/frontend/src/api/modules/dashboard.ts#L32-L36) · [速率采样服务](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/service/dashboard.go#L188-L196)
+**M1 节点概览。** `node.inspect` 调用本机 `GET /api/v2/dashboard/current/node`，在 Go 采集点取得 CPU 百分比、已用内存字节及各自的采集有效性。至少一项有效即可完成命令。失败字段在本次事件中取空值，页面保留同一节点、同一 incarnation 上的最后有效值与时间。两项都失败时命令为 `FAILED`。旧 DTO 缺少有效性时暂停宣告可信采样能力。心跳只更新 `lastSeenAt`。[GA-01 消息及字段样例](go-agent-interface-contract.md) · [操作与源码映射](operation-ledger.md#源码核验记录)
 
-`node.inspect` 适配器需从采集点取得每类指标的有效性。XC 按租户、节点、incarnation 和所选网卡或磁盘保存基线。首次有效采样、更换选择器、计数回退或时间不递增时，页面显示「等待下一次采样」。同一基线上的两份有效样本计数相等时，速率才是零。迟到的响应只能更新其所属节点和选择器。
-
-对仪表盘采集成功的指标，用 `shotTime` 更新最后有效的 `sampledAt`。FI-HOST 注入采集失败后，核对该指标保留原值与时间并标记 `stale`，从未成功则显示「暂无数据」。连接心跳单独更新 `lastSeenAt`。AC-UI 核对切换节点后迟到样本的归属。AC-HOST 可回放相隔 2 秒的两个有效样本，发送字节增加 4096 B、磁盘读取增加 4 MiB 时，页面应分别显示 2 KiB/s 和 2 MiB/s。[原首页的时间差与单位换算](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/frontend/src/views/home/index.vue#L1082-L1126)
+**扩展仪表盘速率。** `GET /api/v2/dashboard/current/:ioOption/:netOption` 返回累计字节数。XC 在同一租户、节点、incarnation 和磁盘或网卡内，用两次有效读数的增量除以时间差。第一份样本、选择器变化、计数回退或时间未递增时重建基线。只有两次有效计数相等才显示零速率。[扩展场景实测记录](spaces/implementation-review.md#实测记录) · [原首页的时间差与单位换算](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/frontend/src/views/home/index.vue#L1082-L1126)
 
 ## 7.3 控制面意图如何映射到安装实例
 
@@ -201,25 +185,19 @@ flowchart LR
 | `installId` 和 `operate` | 本机操作适配器构造 `AppInstalledOperate`，只给本操作赋值 `restart`。Go 服务从安装记录确定 Compose 项目路径。执行中保留该实例的标记及启动前后证据 |
 | `commandId` 和 `taskID` | 云端命令在租户内追踪；原 DTO 的任务 ID 只在特定执行分支有对应任务。常规分支以操作标记对账，有本地任务时再记录其 ID |
 
-工程联调须在结果中记录实际分支。常规 OpenResty 重启调用 Compose 后同步安装状态，启用生命周期脚本等条件会改走任务路径。[请求 DTO](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/dto/request/app.go#L92-L109) · [实例查找](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/service/app_install.go#L265-L269) · [执行分支](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/service/app_install.go#L294-L321)
+先记录实际执行分支。常规 OpenResty 走 Compose，生命周期脚本等配置可能进入任务路径。[Go 操作与源码映射](operation-ledger.md#源码核验记录)
 
 ## 7.4 网站备份如何留下三份证据
 
-前端 `backup()` 生成 UUID，把 `type`、站点别名 `detailName` 和 `taskID` 交给备份 API，随后用相同任务标识打开日志。agent 中的 `WebsiteBackup` 按别名解析站点，在 `agent.db` 创建带文件名和任务 ID 的 Waiting 记录。独立备份由 goroutine 执行，`Task.Execute` 向 `task.db` 保存任务并推进步骤，工作函数写出本地归档，调用方再更新备份记录。[前端提交](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/frontend/src/components/backup/index.vue#L339-L356) · [受理与记录创建](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/service/backup_website.go#L29-L59) · [异步执行](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/service/backup_website.go#L222-L246) · [任务持久化](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/task/task.go#L317-L360)
+一次独立网站备份产生三份证据。`WebsiteBackup` 按别名解析原站点，在 `agent.db` 创建 Waiting 业务记录。后台任务在 `task.db` 推进步骤并写出归档，任务返回后再更新业务记录。即使任务已成功，业务记录仍可能停在 Waiting。节点重启也可能把执行中的任务标为中断。两库和文件系统各自写入。[Go 创建与恢复入口](operation-ledger.md#源码核验记录) · [任务状态写入](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/task/task.go#L291-L293) · [业务记录写回](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/service/backup_website.go#L238-L246) · [中断处理](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/service/task.go#L126-L131) · [备份记录字段](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/model/backup.go#L17-L35)
 
-任务库和业务库分别写回。任务终态更新和独立备份成功回写的错误均未向上层返回。因此，即使没有进程中断，也可能看到任务为 Success、备份记录仍为 Waiting。部分 Executing 任务在重启后还会被记为 Failed/Interrupted。原版备份记录保存文件位置，缺少整文件摘要及长度。[任务状态写入](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/task/task.go#L291-L293) · [业务记录写回](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/service/backup_website.go#L238-L246) · [中断处理](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/service/task.go#L126-L131) · [备份记录字段](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/model/backup.go#L17-L35)
-
-网站备份创建的云端 operation 名称和权限尚待登记。当前可用测试适配器提供 `commandId`，把本地 Go 调用、任务、业务记录和归档串起来，验证下表的本地对账条件。云端创建、鉴权和投递需在创建操作完成登记后另行联调。还原使用独立的 `backup.restore` 契约。[主方案 C.2 操作注册表](technical-plan.md#c2-operation-registry-初始示例)
-
-目标适配在执行前固定命令、站点、`localTaskId` 和预期成员。对两个 runtime 验收样本，都应包含网站配置、站点数据和已关联数据库。本地 PHP 跳过受管 runtime 子包，受管样本应包含它。归档关闭后，节点需持久记录关联的 `backupRecordId`、文件位置、长度、SHA-256 及采集时间，供独立复算。[归档成员及写入顺序](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/service/backup_website.go#L261-L317)
-
-| 恢复后观察到的证据 | 对原命令的处理 |
+| 核对时看到的事实 | 原命令的处理 |
 |---|---|
-| 业务记录 Waiting，任务 Success。原命令、任务、备份记录和文件一一对应，预期成员齐全，复算的长度与摘要均匹配归档关闭时的凭据 | 按原命令和当前 revision 合并本地完成结果，记录两库差异与依据。重复执行对账时复用同一结果 |
-| 文件存在，但缺少原命令绑定或关闭时的凭据，成员、长度或摘要冲突，或任务中断后尚无法归因 | 保留原记录并进入 `UNCERTAIN`，只读补证。事后对同一文件计算两次摘要仍无法证明它属于原命令 |
-| 本地归档已核实，R2 制品仍在上传或校验中 | 分别记录本地完成和云端进度。云端交付以原 `artifactId` 达到 `READY` 为准 |
+| `commandId`、`localTaskId`、`backupRecordId` 与原站点对应，预期成员齐全，复算长度和整文件 SHA-256 与归档关闭时的凭据相符 | 按当前 revision 补记本地完成，同时保留任务 Success 与业务记录 Waiting 的差异。重复对账复用该结果 |
+| 只有文件，缺少原命令绑定或关闭时的凭据，或任务中断后无法归因 | 原命令进入 `UNCERTAIN` 并只读补证。出现相互矛盾且无法裁决的结果，按状态机转人工复核 |
+| 已确认本地归档，R2 仍在上传或校验 | 记录本地完成时刻。云端制品以原 `artifactId` 达到 `READY` 为准 |
 
-**恢复另行验收。** `BackupService.WebsiteRecover` 按别名定位目标站点，对 `handleWebsiteRecover` 返回的错误只写日志。独立恢复由后台任务执行，涉及回滚备份、站点配置、数据解包和服务重载。P5 在隔离目标上记录恢复前状态、制品摘要和任务 ID，再通过控制台按原 `commandId` 核对任务、恢复后的配置和文件样本、适用的数据库样本及站点可访问性。另在切换阶段中断，按 checkpoint 核对实际恢复或回滚的状态，证据不足时保留待核对。对应 AC-RECOVERY、FI-RECOVERY。[恢复入口与回滚备份](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/service/backup_website.go#L64-L99) · [恢复收尾与异步执行](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/service/backup_website.go#L180-L220)
+创建的云端操作和权限由 GA-14 登记。隔离恢复另走 P5 的 `backup.restore`，执行前核对源归档、目标版本及依赖归属，完成后核对配置、数据和站点响应，中断后按原任务 checkpoint 核对恢复或回滚。[操作注册表](technical-plan.md#c2-operation-registry-初始示例) · [备份与恢复验收](spaces/implementation-review.md#工作包三--网站备份与归档核验)
 
 # 8. 云端与节点的实施契约
 
@@ -227,19 +205,14 @@ flowchart LR
 
 | 责任方 | 实施输入与写入点 | 并发和恢复判定 |
 |---|---|---|
-| XC 与控制 API | 提交租户、节点、业务意图、资源版本和幂等键。鉴权后由 TenantData 创建收据、命令、审计和 outbox | 返回相同收据时打开原命令。已撤权的请求停止在准入层 |
-| 节点适配器 | 在 journal 用 `(nodeIncarnation, commandId)` 定位已接受的意图；比较 `intentHash`。重启绑定安装实例，备份绑定站点资源 | 相同意图复用原映射。开始操作前，在资源锁内复核目标版本、权限和有效期。重新安装导致实例变化时要求重新确认 |
-| Go 重启入口 | 为常规 Compose 分支补可持久查询的 `operationMarker`。记录操作目标、启动前容器身份和时间，执行后读取新证据 | 找到标记但缺少可信结果时只读核对。证据不能归因时保留原命令并进入 `UNCERTAIN` |
-| Go 备份入口 | 先固定 `localTaskId`。拟在业务库用本次命令的唯一关联与 `BackupRecord` 同事务写入，返回 `backupRecordId`；任务库继续按本地任务 ID 记录步骤 | connector 若在关联回写前退出，可按命令找到原业务记录，再核对任务及归档。结果合并前保留映射和现场清单 |
-| 结果接收端 | 收集操作标记或备份记录 ID、任务 ID、制品大小和摘要等适用证据，将同一事件写入持久 inbox | 对重复事件按摘要与 revision 判定。只有结果已经合并才向节点确认；冲突保留双方证据 |
-
-备份若要交付到 R2，还需将本地归档绑定到 `artifactId`，完成第 5.3 节的整件摘要核验后，才可对外声明云端制品可用。本地归档生成成功和云端制品就绪应记录各自的时间与证据。
+| XC、控制 API、TenantData | 租户收据固定原命令、目标版本与期限，和意图、审计、outbox 同事务提交 | 重试先鉴权，再按原收据查回已受理意图 |
+| Connector journal | 按 `(nodeIncarnation, commandId)` 存 `intentHash` 和原目标绑定。持资源锁复核授权、代次、版本与期限 | 已登记则复用映射。原实例重装或改绑时拒绝尚未启动的旧命令 |
+| Go 重启适配器 | Compose 入口持久记录 `operationMarker`、原实例和启动前容器证据 | 可能已启动时按原标记只读核对 |
+| Go 备份适配器 | 先固定 `localTaskId`。设计要求命令关联和 `BackupRecord` 在业务库同事务写入；任务库按原任务 ID 推进 | 重启后按原命令取 `backupRecordId`，再核对任务与归档关闭时的凭据 |
+| 结果接收端 | DO 写持久 inbox，TenantData 按事件身份、摘要和 revision 合并 | 合并或确认同一结果后回 `result.committed`；冲突保留双方证据 |
 
 ## 8.2 实施工序与联调判定
 
-1. **完成首次可信采样。** P0 固定 Go、Console、operation 映射和接口版本。到 P2，真实 Linux 节点须完成注册和 ready，由该节点的适配器调用第 7.2 节的 Go 入口，回传绑定节点身份、采样时间和有效性的 CPU、内存读数。测试人员用同一采样的原始字段核对控制台显示值，断开节点后再核对最后成功时间和 stale 标志。保留注册记录、连接代次、原始样本与页面读数，按 DEV02、AC-HOST、FI-HOST 验收。
-2. **接入一次重启。** 用可追踪的测试实例复核成功路径，在启动已发生、回执未落盘的位置中断 connector。以本地操作标记和启动证据证明动作次数；无法归因时应保留未知状态。对应 AC-CMD、FI-CMD、AC-APP。
-3. **验证一次本地网站备份。** 由测试适配器发起创建，按 AC-APP 核对本地 PHP 和受管 runtime 样本的预期成员。卡在任务成功、业务记录写回前，恢复时按 AC-FILE 复算归档长度与摘要。按 FI-CMD 比较对账前后同一命令发起备份的次数，应无新增调用。原任务内部重试单列。还原能力另取隔离目标按 AC-RECOVERY 实测。
-4. **切换和回退。** 按节点与能力开启适配。回退时停止该能力的新命令，保留已受理任务的对账和撤权检查。将 journal、租户事件、资源版本和归档摘要归入同一次联调记录，容量验收沿用独立门禁。
+先完成 M1 注册、建连与首采，再接入 M2 单次重启、M3 备份创建、M4 隔离恢复。按节点和能力放量；回退时停止接收该能力的新命令，继续核对已受理命令并检查撤权。[研发计划与各里程碑](go-agent-development-plan.md#分阶段里程碑)
 
-Console 的 `pnpm test:e2e` 可用 Mock 验证页面状态、切换及迟到响应。`pnpm test:e2e:local` 连接本地 API 和磁盘 SQLite，现有用例核对账号权限、撤权和审计。节点接口实现后可在本地层补作用域与持久化回归。注册后的节点身份、WSS 连接、Go 调用次数、归档或还原后的数据需由真实 Linux 联调记录证明。[Mock 测试入口](https://github.com/XCAngelWatch/AngelFleetConsole/blob/df715b38d174b2bdad7a5ab58150c05ead6c5d36/tests/e2e/helpers/mock-api.ts) · [本地真实后端用例](https://github.com/XCAngelWatch/AngelFleetConsole/blob/df715b38d174b2bdad7a5ab58150c05ead6c5d36/tests/local/real-backend.spec.ts) · [工程实施与联调工作页](spaces/implementation-review.md)
+Console Mock 核对页面，API + SQLite 核对授权与持久化，真实 Linux 节点核对注册身份、WSS、Go 入口调用次数及现场效果。每次运行在对应场景填写验证层级。[联调工作页](spaces/implementation-review.md) · [Mock 测试入口](https://github.com/XCAngelWatch/AngelFleetConsole/blob/df715b38d174b2bdad7a5ab58150c05ead6c5d36/tests/e2e/helpers/mock-api.ts) · [本地真实后端用例](https://github.com/XCAngelWatch/AngelFleetConsole/blob/df715b38d174b2bdad7a5ab58150c05ead6c5d36/tests/local/real-backend.spec.ts)

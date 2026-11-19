@@ -1,22 +1,17 @@
 # 1Panel v2 Cloudflare 控制面详细技术方案
 
-首版以 AngelFleetConsole 的 React/Next.js 控制台和现有 API 为基础，迁移 1Panel v2 运维功能。本文的「XC React」指这套控制台。节点继续运行原 Go core/agent，新增独立 connector 接入 Cloudflare。首个联调里程碑是在控制台看到已注册 Linux 节点的第一份可信采样。Go core 退役单列 P6。[Go Agent 研发计划](go-agent-development-plan.md)
+AngelFleetConsole 负责控制台和云端 API。Linux 节点保留 1Panel Go core/agent，新增独立 connector 接入 Cloudflare。本文的「XC React」指 AngelFleetConsole 的 React/Next.js 前端。
 
 **设计版本 2.4 · 实施状态：实施设计，待 P0–P6 分阶段验收**
 
-本方案定义 XC React、Cloudflare 控制面、connector 与 Go 执行栈之间的最终职责边界。1Panel 的主机、容器、网站、数据库、文件、备份和终端能力继续由 Go 执行；Cloudflare 负责身份、租户、授权、任务编排、审计和可靠事件；XC React 负责统一运维体验。代码复用输入必须在实施时固定为可复现提交，具体入口和迁移边界见附录 B。
-
 ## 执行摘要
 
-| 项目 | 最终方案 |
+| 决策 | 对交付的影响 |
 |---|---|
-| 产品目标 | 在 XC React 中提供 1Panel v2 的完整云端运维体验，并保持主机执行能力与云端控制能力解耦 |
-| 首版交付 | React 控制台、Workers 控制 API、TenantData/D1、AgentConn/Relay DO、Queues 补偿、R2 制品、connector、原 Go core/agent |
-| Go 策略 | 复用 Go 业务实现；为可靠执行补充 connector、operation adapter、journal、任务关联和现场核验；core 退役作为 P6 独立阶段 |
-| 数据权威 | 租户业务状态由 D1 负责，节点连接与顺序由 DO 负责，主机事实由 journal 与节点执行器负责，大对象由 R2 负责 |
-| 可靠性原则 | 先持久化意图，再投递；响应丢失先对账，不自动重复副作用；Queues 只作持久补偿，在线命令使用 AgentConn 快路径 |
-| 容量门禁 | 单租户 10,000 节点独立压测；30 秒授权复核、60 秒业务心跳、300 秒摘要写入分别计量，逻辑检查与真实 SQL 分开核算 |
-| 明确不包含 | 不把静态站点、模拟节点或多租户分散压测当作真实节点容量验收；不把保留 Go core 当作云端功能已经完成 |
+| 首个里程碑 M1 | 在两个租户各自的控制台看到本节点 Go 采集的 CPU、内存与采样时间，断线后能辨认最后好值。GA-01 已验证契约和样例，真机结果由 GA-10 验收。[Go Agent 派工单](go-agent-development-plan.md) |
+| 首版产品 P0–P5 | Cloudflare 管身份、授权、编排和审计；Go 执行主机操作。覆盖 34 个公开路由组及组外入口。单租户 10,000 节点须单独压测。[功能完成标准](#5-功能完成标准与容量边界) |
+| 可靠执行 | D1 先记录命令，AgentConn 通过已连接的 WSS 投递，Queues 补偿漏投。节点 journal 保存执行事实，响应丢失时按原命令对账。[断线对账](#72-断线后的任务对账) |
+| 后续交付 P6 | 配置、升级和快照恢复可脱离 core 后，独立验收 managed-agent。[退役条件](#b8-后续-core-退役的源码侧验收条件) |
 
 ## 一页架构总览
 
@@ -29,6 +24,7 @@ flowchart LR
     A --> N[AgentConn DO]
     A --> R[Terminal Relay DO]
     A --> Q[Queues / Workflows]
+    Q -.补偿.-> N
     A --> O[(R2 制品与归档)]
     N <-->|主动 WSS| C[节点 Connector]
     R <-->|独立 WSS| C
@@ -43,41 +39,23 @@ flowchart LR
 
 ## 架构图索引
 
-| 图 | 回答的问题 | 位置 |
-|---|---|---|
-| 一页架构总览 | 云端、节点和数据通道如何分工 | 本节 |
-| 首版架构与后续演进 | 首版保留什么、后续如何去除 core | §3 |
-| 部署拓扑 | 每个 Cloudflare 组件和节点进程负责什么 | §4 |
-| 数据分层与权威归属 | 哪个存储是事实来源、数据如何归档 | §6.2 |
-| 节点注册 | 注册凭据如何变成稳定节点身份 | §7.1 |
-| 任务对账 | 响应丢失后如何恢复而不重复副作用 | §7.2、§8 |
-| 终端撤销 | 授权版本、租约和 PTY 如何共同关闭 | §7.3、§9 |
-| 命令生命周期 | API、D1、AgentConn、journal 和 Queue 如何协作 | §8 |
-| 终端实时流 | Relay、connector、PTY 和背压如何隔离 | §9 |
-| 迁移边界 | XC、Cloudflare、connector、Go 和 managed-agent 的阶段关系 | §13 |
-| 单租户容量分层 | 1 万节点负载如何拆成可测指标和门禁 | §15.1 |
-| 命令状态机 | 39 条状态转移的唯一机器权威 | 附录 A.5 |
-| Outbox 补偿 | 至少一次通知如何避免丢失和重复副作用 | 附录 A.6 |
-| 终端会话 | 浏览器与节点如何通过 Relay 建立隔离流 | 附录 A.7 |
-| 数据约束 | 主要实体和操作之间的关系 | 附录 C |
+| 阅读主题 | 图示 |
+|---|---|
+| 架构与数据 | [首版演进](#3-首版架构与后续演进) · [部署拓扑](#一页架构总览) · [数据归属](#62-数据分层) · [持久约束](#附录-c--数据约束与操作契约) |
+| 节点与命令 | [节点注册](#71-节点注册与身份建立) · [断线对账](#72-断线后的任务对账) · [命令生命周期](#8-api-兼容任务执行与-mcp) · [状态图](#a5-命令状态幂等与本地-journal) · [outbox 补偿](#a6-d1-outbox至少一次通知与跨服务一致性) |
+| 终端 | [授权撤销](#73-终端授权撤销) · [实时流](#9-终端实时流与国内链路) · [会话建立](#a7-relay-角色票据与独立终端连接) |
+| 交付 | [迁移阶段与依赖](#13-xc-前端与-go-完整功能迁移) · [单租户容量实验](#151-单租户容量与证据门禁) |
 
 ## 阅读路径与权威来源
 
-先读本页的架构决策、功能完成标准和迁移路线，再按实施问题进入对应权威工件。摘要章节只说明边界和决策，协议、源码事实和机器可读定义不在摘要章节重复展开。
-
-| 你要回答的问题 | 先看 | 权威来源 |
-|---|---|---|
-| 方案是否可行、首版保留什么 | §1、§5、§14 | 本文决策摘要 |
-| 一次服务重启从点击到回执如何联调，断线后怎么判断是否已经执行 | [技术详细设计](technical-design.md) | 附录 A.4–A.6、C.2–C.3 与 Go 操作台账 |
-| Cloudflare 限制与容量怎么验收 | §15.1、§15.3.5 | [`docs/platform-constraints.md`](platform-constraints.md) 与官方链接 |
-| 注册、授权、命令、终端和文件协议怎么实现 | 附录 A | A.2–A.12；状态边统一以 [`docs/command-state.json`](command-state.json) 为准 |
-| Go/1Panel 现有功能如何迁移 | §13 | 附录 B 与 [`docs/operation-ledger.md`](operation-ledger.md) |
-| 本地 Go 服务接入先派哪些任务，怎样验收 | §14 | [Go Agent 研发计划](go-agent-development-plan.md) 的任务依赖、工作量与实机验收 |
-| 节点仓库与目录、注册与握手的线格式 | [GA-01 接口契约](go-agent-interface-contract.md) | [同一节点的完整请求、消息和异常样例](examples/go-agent-first-sample.json) |
-| 数据表、操作和错误码如何落地 | 附录 C | C.1–C.3；构建检查负责字段和台账一致性 |
-| 产品需求、生命周期和验收如何追踪 | 附录 D | D.1–D.5 与 [`docs/acceptance-ids.json`](acceptance-ids.json) |
-| OTA/Yocto 是否进入首版 | 附录 E | E.1–E.4，默认是候选扩展 |
-| 安全边界和攻击路径 | 安全模型文件 | [`docs/angelfleetprd-threat-model.md`](angelfleetprd-threat-model.md)；目标控制面与当前静态站点分开描述 |
+| 要完成的工作 | 去哪里查 |
+|---|---|
+| 排期、派工、交接 | [§14 阶段退出条件](#14-迁移路线与任务级工作包)和 [Go Agent 研发计划](go-agent-development-plan.md)给出依赖、责任角色和工期。 |
+| 开始 Go / Console 联调 | [GA-01 契约](go-agent-interface-contract.md)固定仓库目录、注册、握手和采样线格式。[完整 JSON](examples/go-agent-first-sample.json)供两端共用，[联调验收记录](spaces/implementation-review.md)登记实测。 |
+| 把一次操作从设计落实到源码 | [技术详细设计](technical-design.md)以一次重启串起三端；[Go 操作台账](operation-ledger.md)登记执行入口、取消边界和现场核验方法。 |
+| 查协议、数据和迁移范围 | [附录 A](#附录-a--协议数据与可靠性细则)规定协议，[附录 B](#附录-b--v2-源码基线与完整迁移矩阵)登记源码范围，[附录 C](#附录-c--数据约束与操作契约)列数据约束和操作注册表。状态机转移取自 [command-state.json](command-state.json)。 |
+| 追踪需求和发布证据 | [附录 D](#附录-d--产品需求与设备生命周期)关联产品旅程、权限与验收编号，[acceptance-ids.json](acceptance-ids.json)登记有效编号。容量口径见 [§15.1](#151-单租户容量与证据门禁)及[平台约束](platform-constraints.md)，安全边界见[威胁模型](angelfleetprd-threat-model.md)。 |
+| 判断系统 OTA 和 Yocto 是否适用 | [附录 E](#附录-e--可选系统-ota-与-yocto-扩展)规定选入条件和单独验收要求。 |
 
 # 1. 架构决策与交付边界
 
@@ -97,7 +75,7 @@ flowchart LR
 
 保留 core 的完整功能版本与无 core 的 managed-agent 版本是两个交付层。换用 XC 前端不要求先删除 core；保留 core 也不免除租户隔离、可靠执行、终端撤销和生命周期验证。首版由云端接管常规管理写入，旧本地入口保留为受控兼容或恢复渠道，避免两套管理端同时修改同一资源。
 
-功能范围覆盖当前公开 v2 注册的 9 个 core 路由组、25 个 agent 路由组，以及终端、文件分享、MCP transport、安装器、调度与清理等组外能力。企业私有实现、社区空 provider 和新增 SaaS 能力分别建账。第 13 节给出 XC 前端与 Go 的实施分工，附录 A 保留可靠性协议，附录 B 给出 34 个路由组的完整迁移矩阵，附录 C 定义数据和操作约束。 附录 D 定义角色、需求追踪和设备生命周期；附录 E 保留系统 OTA 与 Yocto 的候选扩展设计，选入具体发布范围后单独验收。
+迁移以 9 个 core 路由组、25 个 agent 路由组及终端、文件分享、MCP transport、安装、调度和清理等组外入口为范围。企业私有实现、社区空 provider 和新增 SaaS 能力分别登记处置依据。[逐端点台账要求](#136-逐功能迁移台账)
 
 # 2. 当前 v2 与目标系统的差异
 
@@ -157,25 +135,7 @@ flowchart TB
 | 原 core/agent | 本机业务服务、原数据库、调度与执行环境 | 首版保留；常规管理写入由云端接管 |
 | managed-agent/updater | 无 core 配置来源、独立安装升级和恢复 | 作为后续 core 退役阶段交付 |
 
-```mermaid
-flowchart LR
-    UI[XC React] --> GW[Web Gateway]
-    GW --> API[Control API]
-    API --> TD[TenantData Worker]
-    TD --> DB[(Tenant D1)]
-    API --> AD[AgentConn DO]
-    API --> RT[TerminalRelay DO]
-    API --> Q[Queues / Workflows]
-    API --> R2[(R2)]
-    AD <-->|控制 WSS| C[Connector]
-    RT <-->|终端 WSS| C
-    Q -.补偿.-> AD
-    C --> EA[Execution Adapter]
-    EA --> GO[Go core / agent]
-    C <--> R2
-```
-
-这张图只表达部署边界：控制 API、实时流、对象传输和节点执行彼此分离；Queue 是补偿路径，不是在线命令的唯一入口。
+组件连接关系见[一页架构总览](#一页架构总览)。控制指令、终端流和文件传输使用各自的通道。
 
 Worker 之间使用 Service Binding，DO 通过 namespace binding 访问，D1 通过数据 Worker 已部署的 binding 访问。Service Binding RPC 是对象能力，不等于租户授权；调用方必须等待每次调用，provider 只暴露显式领域方法并再次核对主体、tenant、角色和 command scope，记录每次 binding invocation。单次请求的 Worker-to-Worker 调用预算（官方上限 32 次）进入 CAP 指标；provider 先发布、调用方后切换，删除方法前先完成调用方迁移。公网传入的身份头在入口统一清理，服务层根据已验证主体重建调用上下文。日志中统一携带 traceId、tenantId、nodeId、commandId 或 terminalId。[Service Binding RPC](https://developers.cloudflare.com/workers/runtime-apis/bindings/service-bindings/)
 
@@ -195,9 +155,7 @@ DO 使用服务端 `ctx.acceptWebSocket()` 接受连接以支持休眠。connect
 | 容量 | 单租户 10k 与多租户对照分别达到冻结的混合负载和持续运行门禁 | CAP 独立报告，模拟与真实节点覆盖分开 |
 | 后续 core 退役 | P6 独立完成无 core 的安装、启动、升级和恢复 | 附录 B 清单，另行接受 |
 
-运行边界只保留三条实现原则：控制 API 与文件传输分离，D1 保存控制元数据和必要索引，节点保留资源事实；原始日志和大文件走独立通道；单租户热库、授权路径和恢复积压必须独立验证。Cloudflare 数字、套餐和复核日期集中见 [`docs/platform-constraints.md`](platform-constraints.md)。
-
-Workers 的平台边界与套餐数字集中见 [`docs/platform-constraints.md`](platform-constraints.md)。产品仍以普通控制消息初始 64KiB、大内容使用对象引用、流式处理设置应用层总量/时长/缓冲预算为设计约束；这些应用预算不能替代平台限制。
+控制消息初始上限为 64 KiB，D1 保存控制元数据和索引，资源事实留在节点，原始日志和大文件走独立通道。流式处理须限定总量、时长与缓冲。容量实验分别验证热租户库、授权路径、故障积压及恢复余量。应用预算与平台套餐上限分别核对。[参数冻结表](#1536-r7-go-操作台账r8-术语与-r9-参数冻结) · [平台约束与复核日期](platform-constraints.md)
 
 # 6. 租户分库、数据归属与一致性
 
@@ -255,15 +213,20 @@ sequenceDiagram
     participant W as 控制 API
     participant T as 租户数据服务
     participant C as AgentConn DO
-    N->>W: 一次性注册凭据与节点公钥
-    W->>T: 校验并原子消费注册凭据
+    N->>W: enroll 请求挑战并提交 Ed25519 签名
+    W->>T: 校验签名并原子消费 enrollment
     T-->>W: 绑定 tenant、node、incarnation
-    W-->>N: 节点身份与受控连接配置
-    N->>C: 主动 WSS，证明节点身份
-    C-->>N: 当前连接 epoch 与授权状态
+    W-->>N: 返回节点身份与版本
+    N->>W: connect-ticket 使用新的建连挑战证明身份
+    W-->>N: 短期连接票据
+    N->>W: 携票 Upgrade 至 WSS
+    W->>C: 将已验证连接路由到节点专属 DO
+    N->>C: hello 报告版本、能力与持久代次
+    C-->>N: welcome 给出待确认的 epoch
     N->>N: 持久化连接代次，旧代次不得执行
     N->>C: ready 确认本地代次已持久化
     C->>C: 校验 ready 后激活当前连接
+    C-->>N: ready.ack 确认激活，此后可接收命令
 ```
 
 ## 7.2 断线后的任务对账
@@ -318,25 +281,32 @@ XC React 页面使用新的领域 API，显式携带稳定 tenantId、nodeId、c
 sequenceDiagram
     participant U as React
     participant A as Control API
-    participant D as Tenant D1
+    participant D as TenantData / D1
     participant N as AgentConn DO
     participant Q as Queue 补偿
     participant C as Connector
     participant J as 本地 journal
     participant G as Go 执行器
     U->>A: 提交 operation + 幂等键
-    A->>D: 校验授权并写 command + outbox
-    D-->>A: 返回 commandId / revision
-    A->>N: dispatchKick(commandId, eventId, revision)
+    A->>D: 校验权限，事务写 command、收据、审计与 outbox
+    D-->>A: 持久提交 commandId / revision
+    par 异步受理
+        A-->>U: HTTP 202 及 commandId
+    and 在线投递
+        A->>N: dispatchKick(commandId, eventId, revision)
+    and 持久补偿
+        D-->>Q: outbox dispatcher 发布通知
+        Q->>N: 带 eventId 唤醒，可与直连重复
+    end
+    N->>D: beginDispatch，持久准入后发送
     N->>C: WSS 投递已授权命令
-    C->>J: 记录意图与 operationMarker
+    C->>J: 持久化 RECEIVED 与执行关联信息
     J->>G: 调用受控执行器
     G-->>J: 结果 / checkpoint
     J-->>N: 结果事件
     N-->>D: CAS 合并状态与审计
-    A-->>U: 查询结果与证据
-    A-->>Q: 快路径失败时保留 outbox 补偿
-    Q->>N: 重复事件按 eventId 去重
+    U->>A: 用原 commandId 查询状态
+    A-->>U: 返回已合并结果与证据
 ```
 
 命令链路的完成条件是云端状态、节点 journal 和主机事实一致；HTTP 202、Queue ACK 或 WSS 已发送都只是中间确认。
@@ -427,8 +397,11 @@ P0 必须冻结组件级 RPO/RTO，而不是只给控制 API 一个恢复时间�
 ```mermaid
 flowchart LR
     P0[P0 契约与基线] --> P1[P1 XC 页面与权限]
-    P1 --> P2[P2 注册与控制连接]
+    P0 --> P2[P2 注册与控制连接]
+    P1 --> M1[M1 两租户首次可信采样]
+    P2 --> M1
     P2 --> P3[P3 命令、终端与可靠执行]
+    P1 -.页面集成.-> P3
     P3 --> P4[P4 全量业务与真实节点]
     P4 --> P5[P5 升级、备份与恢复]
     P5 --> P6[P6 managed-agent / core 退役]
@@ -487,14 +460,9 @@ flowchart LR
 
 ## 13.3 Go 复用边界
 
-| 分类 | 实施内容 |
-|---|---|
-| 保留 | Docker、网站、数据库、文件、备份、主机、Cron、KVM 等业务 service/repo/utils |
-| 适配 | DTO、业务错误、资源 ID、权限上下文、本地 taskId、日志/文件/实时流、SSH host key 校验、执行器租约 |
-| 新增 | connector、注册、WSS、epoch、operation registry、journal、去重、取消、结果核验 |
-| 后续拆分 | core.db 读取、配置投影、启动模式、独立 updater、managed 快照与旧快照转换 |
+首版在原 Go 进程和初始化环境中执行现有业务。connector、操作适配器和 journal 承接云端协议；SSH 适配须校验主机密钥，会话执行器强制租约。常用命令目录保存用户脚本，任务记录保存每次获准执行的状态与结果。
 
-优先让原服务在原进程与初始化环境中运行。常用命令目录与可靠命令任务是两个领域：前者保存用户内容，后者记录一次具体授权执行及其结果。
+[附录 B.1.1](#b11-go-复用和改造分类)按保留、适配、新增和后续解耦列出改造范围；[操作台账](operation-ledger.md)逐项标明 Go 入口、关联标识、资源锁和核验方法。
 
 ## 13.4 数据归属与后台调度
 
@@ -550,32 +518,11 @@ disposition,targetStage,workPackageId,acceptanceIds,status,evidenceRefs,gapDecis
 | P5 首版生命周期与集成 | 保留 core 的安装、升级回滚、旧数据/快照恢复、轮换退役与运维交接 | 底座可在 P0/P2 后开工；最终汇合 P1–P4，完成功能、容量和恢复门禁 |
 | P6 后续 core 退役 | managed-agent、配置投影、独立 updater、快照转换 | 独立范围与版本；无 core 生命周期及附录 B 条件全部通过 |
 
-P0–P5 交付保留本机 core/agent 的完整功能首版；普通服务器业务不依赖候选系统 OTA、Yocto SDK 或刷写包。并行按契约、共享数据和修改目录划界，每个工作包声明真实依赖，不能只按阶段编号串行。云端是常规管理写入入口，本地恢复进入维护状态并核对未决任务。P6 按节点冻结写入、导出校验、安装投影、提高连接代次、切换写入权后停 core；回退先核对任务及数据兼容性，再恢复入口和写入权。
+P0–P5 的首版保留本机 core/agent。P6 切换时逐节点冻结写入、导出并校验数据、安装配置投影、提高连接代次、移交写入权，再停 core。回退前核对在途任务与数据兼容性。普通服务器的首版退出条件独立于系统 OTA 和 Yocto。
 
-每包覆盖一个可验收的功能闭环：React、云端权限与接口、Go 适配、必要迁移、任务/流/文件、错误呈现和恢复。进度统一为 `PLANNED → IN_PROGRESS → IMPLEMENTED_UNVERIFIED → VERIFIED → ACCEPTED`；`BLOCKED` 附原因、依赖与恢复条件。处置分类与进度分开：处置按第 13.6 节枚举登记，不等于已验证；`ACCEPTED` 必须有实际接受依据。契约变化使相关证据失效时重新验证。
+**派工。** 每包绑定需求、端点、验收及故障用例，明确仓库和可改目录、依赖、契约版本、检查命令及预期结果。按功能覆盖涉及的 React、云端权限、Go 适配、迁移和恢复。首轮直接使用[Go Agent 研发计划中的工单](go-agent-development-plan.md)，进度和处置枚举统一使用 [§13.6](#136-逐功能迁移台账)。
 
-以下为任务记录结构示例，状态仅为计划。`$P0`/`$workspaceMap` 是待解析引用；P0 必须绑定实际仓库、允许目录、端点、用例与检查命令，未解析前不得开始依赖实现，不能把示例当成真实路径或已建任务。
-
-```json
-{
-  "taskId": "P3-CMD-01",
-  "stageId": "P3",
-  "status": "PLANNED",
-  "requirementIds": ["REQ03"],
-  "endpointIds": ["$P0.endpointsForTask"],
-  "dependsOn": ["$P0.taskIds.contractBaseline", "$P0.taskIds.nodeIdentity"],
-  "repositoryRef": "$workspaceMap.connector",
-  "allowedPaths": ["$workspaceMap.connectorAllowedPaths"],
-  "contractRef": "$P0.contractLock",
-  "acceptanceIds": ["$P0.AC.commandCorrelation"],
-  "faultIds": ["$P0.FI.goResponseLost"],
-  "checkCommandRefs": ["$P0.checksForTask"],
-  "requiredEvidence": ["contract-result", "real-node-correlation", "response-loss-recovery"],
-  "completionCondition": "同一commandId关联原Go执行事实；不确定结果不自动重放"
-}
-```
-
-交接记录源码/构建/契约版本、dirtyPatchHash、实际检查与退出码、证据位置、未决任务和现场状态、回退边界、下一包允许目录。JSON 可解析只是结构检查；缺验收证据不得自动推进依赖任务。
+**交接。** 记录源码和构建版本、dirtyPatchHash、实际检查命令与退出码、证据位置、未决任务、现场状态、回退边界及下一包的可改目录。契约变化后需重验受影响用例。三端联调按[验收记录](spaces/implementation-review.md)填写。
 
 # 15. 功能、容量验收与架构决策
 
@@ -604,7 +551,7 @@ flowchart LR
     N -.对照.-> MT[100 租户 × 100 节点 CAP-02]
 ```
 
-容量验证必须从单租户场景开始：逻辑授权检查、真实 SQL、DO 事件、队列补偿和恢复余量分别计量；多租户对照只用于识别隔离和分片效果。
+CAP-01 的单租户热库实验与 CAP-02 的多租户对照实验分别报告。
 
 容量预算先写成可复算基线：30 天、10,000 节点对应逻辑授权复核 864,000,000 次、60 秒心跳 432,000,000 次、300 秒摘要覆盖 86,400,000 次；72 小时对应 86,400,000、43,200,000、8,640,000 次。摘要覆盖不是同等数量的新行，但 UPDATE、索引、审计、故障积压和重试的写放大必须单独计量。单次 30 秒复核拆成 tenant/node shard 批次，初始每批不超过 500–1,000 节点，受 1,000 queries/invocation、10,000 subrequests 和 32 次 Worker invocation 预算约束，最终数值由 CAP-01 冻结。 CAP-01 必须同时跑稳定负载、10k 节点随机重连风暴、授权撤销风暴、D1/DO/Queue 限流、R2 管理操作受限和 Workflow 排队；冻结 p95/p99、错误率、D1 query duration/queue wait/overloaded、rows_read/rows_written、oldestOutboxAge、DO 高水位、Workflow oldestQueuedAge、DLQ 进入率、积压清空时间和回滚阈值。未冻结前只能标记设计目标，不能宣称容量通过。
 
@@ -636,7 +583,7 @@ P0 在压测前冻结负载文件与摘要：命令/秒及操作比例、突发�
 | ADR-07 | 统一终端租约、单次角色票据 | 撤销、恢复或节点执行器关闭机制不成立 |
 | ADR-08 | core 退役为 P6 独立交付 | 共享数据、updater、快照转换及无 core 验收全部就绪 |
 
-实施以依赖和证据推进。P0–P5 完成功能迁移、首版生命周期及对应验收，P6 独立退役 core。容量结果与功能结果分别呈现；任何未运行、失败、不适用或私有能力缺口必须保留明确处置，不以文档检查、截图或接口返回替代真实执行证据。
+复审 ADR 时记录原因、受影响阶段与需要重验的用例。保留未运行、失败、不适用及私有能力缺口的处置记录。[验收记录](spaces/implementation-review.md)
 
 ## 15.3 实施门禁与参数冻结
 
@@ -651,19 +598,17 @@ P0 在压测前冻结负载文件与摘要：命令/秒及操作比例、突发�
 | 投递确认超时/失联 | DISPATCHED、RECEIVED、RUNNING、CANCEL_REQUESTED | RECONCILING | 保留最后可信状态；必须生成对账请求，不得直接判失败 |
 | 取消请求已接受 | DISPATCHED、RECEIVED、RUNNING | CANCEL_REQUESTED | 记录取消意图和操作者；不得覆盖已经确认的副作用 |
 | 证实未启动且取消完成 | CANCEL_REQUESTED、RECONCILING | CANCELLED | 节点 journal 或现场证据证明未启动；`sideEffectExtent=NONE` |
-| 取消与完成竞争 | CANCEL_REQUESTED、RECONCILING | SUCCEEDED 或 REVIEW_REQUIRED | 以最后可信执行事实为准；取消生效前已有副作用时仅将 `cancel_ineffective=1`（`cancelIntent` 保持其取消请求生命周期值） |
+| 取消与执行结果竞争 | CANCEL_REQUESTED、RECONCILING | SUCCEEDED、FAILED 或 REVIEW_REQUIRED | 按已核实的执行结果合并，证据冲突转人工。取消生效前已产生副作用时记 `cancel_ineffective=1`，保留取消请求的生命周期值 |
 | 证实未启动且过期 | DISPATCHED、RECEIVED、RECONCILING | EXPIRED | 只能依据可信未启动证据；已启动任务不得标为过期 |
 | 核对证实完成/失败 | UNCERTAIN、REVIEW_REQUIRED | SUCCEEDED 或 FAILED | 只读核验、checkpoint 或现场事实满足操作契约 |
-| 无法安全判定 | UNCERTAIN、REVIEW_REQUIRED | REVIEW_REQUIRED | `REVIEW_REQUIRED` 是人工待决终态，不自动改写成功或失败 |
-| 晚到结果 | 任一已应用或人工结论 | 原命令状态（事件 `applyState=CONFLICT`） | 按 `eventId + agentEventSequence` 去重；冲突只追加证据和审计，不覆盖人工结论 |
+| 核对后仍无法安全判定 | UNCERTAIN | REVIEW_REQUIRED | 保留冲突证据并交人工。已有人工待决记录可追加证据，保持当前状态 |
+| 人工或最终结论后的晚到结果 | 已有结论 | 保留原命令状态 | 按事件 ID 和节点事件序号去重。证据一致记 `CONSISTENT_NOOP` 并保存已应用 revision；冲突记 `CONFLICT`、追加审计并核对 |
 
 终态集合为 `{SUCCEEDED, FAILED, CANCELLED, EXPIRED, REJECTED, REVIEW_REQUIRED}`。`CANCELLED` 表示停止后续执行，不表示已回滚；`sideEffectExtent` 取 `NONE/PARTIAL/FULL`，实际回滚必须是操作契约声明的补偿步骤并创建关联的新 `commandId`。人工处置记录处置人、时间、权限、依据证据和结论；`UNRESOLVED` 保留 `REVIEW_REQUIRED`。AC-CMD/FI-CMD 增加取消/完成竞争、部分副作用、人工未决、人工后晚到结果一致与冲突、RUNNING 失联六类用例。
 
 ### 15.3.2 R2 云端幂等记录与节点去重分层
 
-HTTP 幂等键和节点 `commandId` tombstone 是两层不同保护。服务端首次创建时固定 `expiresAt`，客户端重试必须复用原始 body、`resourceVersion` 和过期策略；刷新资源版本或延长有效期属于新意图、新 key。服务端先完成当前身份、租户、节点和权限版本校验，再查询幂等收据，不能用旧 key 绕过撤权。
-
-`requestFingerprint` 计算规范化 method、path、body 与 `Idempotency-Key`；`intentHash` 计算最终不可变命令意图。两者、首次生成的 `expiresAt` 和原 `commandId` 一并保存。幂等判定顺序固定为：先完成当前身份、租户、节点和权限版本校验；再按 `(tenantId, idempotencyKey)` 查收据；命中 `KEY_GUARD_ONLY` 返回 410/`IDEMPOTENCY_KEY_EXPIRED`；收据正文存在但 `requestFingerprint` 不同返回 409/`IDEMPOTENCY_REQUEST_MISMATCH`；指纹相同但 `intentHash` 不同返回 409/`IDEMPOTENCY_INTENT_MISMATCH`；两者都相同才返回原 `commandId` 并置 `idempotencyReplay=true`。这样重试判定不会在附录之间形成两套“摘要”语义。HTTP 幂等收据保留期必须覆盖客户端最大重试窗口和 14 天交付重投窗口；破坏性操作的 key guard 至少覆盖节点 tombstone 窗口。收据正文在 `retainedUntil` 前不得清理，正文清理后保留紧凑 key guard 到 `guardUntil`，期间不能静默创建新 commandId；只有完成明确的 key guard 清理策略后才允许复用 key，并返回 `idempotencyReplay=false`。节点 tombstone 仍按 `commandId + intentHash` 拒绝不一致重放；对 `backup.restore`、`disk.format` 等非幂等或破坏性操作，节点再按 `(operation, intentHash)` 保留效果去重窗口。FI-CMD 覆盖收据正文、key guard 和节点 tombstone 分别存在或清理的四象限。
+FI-CMD 分开验证云端收据和节点去重记录。覆盖收据正文、仅存 key guard 和 guard 已清理，并分别验证节点 tombstone 存在与清理时的结果。撤权后重试应被拒绝；修改资源版本或延长时限须按新意图处理。HTTP 判定顺序及保留窗口见 [A.4](#a4-数据模型与对外-api)，节点重复投递与效果去重见 [A.5](#a5-命令状态幂等与本地-journal)。
 
 ### 15.3.3 R3 授权缓存、撤销传播与租约上界
 
@@ -697,7 +642,7 @@ CAP-01 以单租户 D1 和每节点 AgentConn 为主要容量风险。平台限�
 
 ### 15.3.6 R7 Go 操作台账、R8 术语与 R9 参数冻结
 
-首批台账见 [`docs/operation-ledger.md`](operation-ledger.md)，先覆盖 `node.inspect`、`service.restart`、`container.ensure`、`file.install`、`terminal.open` 和 `backup.restore`。每行必须补真实入口文件/符号、固定源码提交、适配或 Go 改造分类、taskId/operationMarker 关联、取消边界、只读核验方法、跨入口锁和 AC/FI/CAP/NET 证据；未补齐前保持 `PLANNED`。
+[C.2 操作注册表](#c2-operation-registry-初始示例)定义每项操作的权限、执行前提与恢复约束；[Go 操作台账](operation-ledger.md)逐项登记源码提交与符号、适配范围、taskId 或 operationMarker、取消边界、只读核验、跨入口锁和 AC/FI/CAP/NET 证据。已核对上游入口的操作仍需完成产品适配和联调。
 
 版本/代次含义集中如下，正文中的同名字段必须遵循这一表：
 
@@ -758,7 +703,7 @@ CAP-01 以单租户 D1 和每节点 AgentConn 为主要容量风险。平台限�
 
 ## 15.4 P0 发布阻断项
 
-下列项目未完成时，文档可评审但不得把首版标为生产可用：
+P0 确定下表的发布标准，各实施阶段逐项提供证据，P5 汇总生产就绪结论。M1 的退出条件是 GA-10 的两租户两节点实测。单租户容量、供应链和灾备由对应发布门禁另行验收。
 
 | 阻断项 | 必须有的证据 |
 |---|---|
@@ -774,7 +719,7 @@ CAP-01 以单租户 D1 和每节点 AgentConn 为主要容量风险。平台限�
 
 # 附录 A · 协议、数据与可靠性细则
 
-协议实现以当前复用输入的 `cedb8ddda9254bdef0fddba96b7fa59c6ab8c633` 为参照，以下内容是待实现与验收的控制协议。文中“agent”或“节点执行端”在首版指 connector、操作适配器、本地 journal 与原 Go core/agent 的组合；在 P6 指 managed-agent 组合。身份、去重、执行前检查和 PTY 关闭等承诺必须落实到实际负责组件，不能仅因旧 agent 二进制存在就视为具备。
+附录 A 规定目标控制协议。首版的「节点执行端」由 connector、操作适配器、本地 journal 和原 Go core/agent 组成；P6 由 managed-agent 承接相同职责。身份验证、去重、启动前检查和 PTY 关闭分别在实际负责组件留证。34 组迁移矩阵基线与首批操作的较新源码核对范围见 [B.1](#b1-基线与验证范围)。
 
 ## A.1. 服务职责与状态归属
 
@@ -881,9 +826,21 @@ AgentConn SQLite 保存 activeEpoch、activeConnection、dispatchCursor、pendin
 
 密钥轮换、停用恢复和重装恢复分别定义接口与权限，P0 冻结后纳入 DEV04/DEV06。不得通过修改 tenantId、公钥或 SN 直接覆盖旧身份；吊销后的恢复使用新鲜身份验证与受控恢复凭证，并先核对原节点未决任务。
 
-创建命令要求 `Idempotency-Key`。服务端按“权限校验 → `(tenantId, key)` 查收据 → key guard 410 → `requestFingerprint` 不同 409/`IDEMPOTENCY_REQUEST_MISMATCH` → 指纹相同但 `intentHash` 不同 409/`IDEMPOTENCY_INTENT_MISMATCH` → 两者相同回放原 commandId”的顺序判定；只有最后一种情况返回 `idempotencyReplay=true`。敏感操作采用资源 revision 前置条件，冲突时返回当前 revision。操作能力从服务端和 agent 的共同 capability 集合中选择。
+**创建命令与重试。** 当前身份、租户、节点归属及权限校验通过后，服务端按 `(tenantId, Idempotency-Key)` 查询收据。`requestFingerprint` 覆盖规范化的 method、path、body 和该 key；`intentHash` 覆盖 [A.3](#a3-控制协议与-agent-本地连接代次隔离) 定义的不可变业务意图。首次创建时确定绝对 `expiresAt`，与两个摘要、原 `commandId` 一起持久化。
 
-命令创建和重试响应统一返回 `idempotencyReplay`：首次创建为 `false`，命中仍有效且两种摘要均一致的幂等收据为 `true`；命中过期 key guard 返回 410，不产生新命令。客户端必须保存原始 body、resourceVersion 和服务端返回的 expiresAt，不能通过刷新参数复用旧 key。
+| 按顺序判断 | HTTP 与返回结果 |
+|---|---|
+| 仅剩 `KEY_GUARD_ONLY` | 410 / `IDEMPOTENCY_KEY_EXPIRED` |
+| 收据正文存在，`requestFingerprint` 不同 | 409 / `IDEMPOTENCY_REQUEST_MISMATCH` |
+| 指纹相同，`intentHash` 不同 | 409 / `IDEMPOTENCY_INTENT_MISMATCH` |
+| 两个摘要均相同 | 回放原 `commandId` 与截止时间，`idempotencyReplay=true` |
+| 首次使用或 key guard 已按策略清理 | 按当前资源版本与能力重新准入，创建成功返回 202，`idempotencyReplay=false` |
+
+C.1 的示例 SQL 还预留了收据状态 `REVOKED`。其触发条件、HTTP 响应及清理策略需在启用该状态前由控制面与 Go 负责人共同冻结。在已冻结的首次采样流程中，只签发有效收据，并按上表处理保留期和重试。
+
+客户端保存原始 body、resourceVersion 和服务端返回的 expiresAt。变更资源版本或延长有效期须提交新意图和新 key。敏感操作的资源版本冲突须返回当前 revision；操作须同时在服务端与节点能力集合内。
+
+收据保留期须覆盖客户端最大重试窗口和 14 天交付重投窗口。`retainedUntil` 前保留收据正文；清理正文后保留紧凑记录至 `guardUntil`，破坏性操作至少覆盖节点 tombstone 保留期。
 
 ## A.5. 命令状态、幂等与本地 journal
 
@@ -935,9 +892,9 @@ stateDiagram-v2
     REVIEW_REQUIRED --> FAILED: 人工处置且证据证实失败
 ```
 
-图中的 `REVIEW_REQUIRED` 是自动状态机的终止闸门；只有具备人工处置权限、处置依据和审计记录时，才允许沿两条人工边生成最终结论。`CONFLICT` 不是命令状态，而是 `command_events.apply_state`，不能出现在状态列或状态图中。完整 39 条转移以 [`docs/command-state.json`](command-state.json) 为唯一权威，CAS 合并函数必须消费该定义；本节转移表仅为异常与竞争事件索引，新增边不能只改图或索引表。
+图中每条边由构建检查与 [command-state.json](command-state.json) 核对。`REVIEW_REQUIRED` 停止自动推进，人工转为成功或失败须具备权限、依据和审计记录。`CONFLICT` 记录在事件的 `apply_state` 列。取消、执行完成与晚到结果的冲突处理见 [§15.3.1 异常与竞争事件索引](#1531-r1-命令状态并发事件与证据裁决)。
 
-状态定义的机器可读基线保存在 [`docs/command-state.json`](command-state.json)。构建检查会逐边比对该文件与本图；人工边仍需经过权限、证据和审计校验，不能因为出现在 fixture 中而自动放行。验收编号的机器可读注册表保存在 [`docs/acceptance-ids.json`](acceptance-ids.json)，构建检查要求正文引用与注册表双向闭合。
+节点按 `commandId + intentHash` 检查重复投递。对 `backup.restore`、`disk.format` 等非幂等或破坏性操作，还要在 `effectGuardUntil` 前按 `(operation, intentHash)` 去重，避免云端更换命令 ID 后重复产生同一副作用。
 
 执行器将操作分为只读、可验证的目标状态变更、带外部幂等键的操作、非幂等或破坏性操作。每类声明恢复策略、可核对证据、取消边界和补偿能力。创建目录可核对目标状态，服务重启可核对运行状态与进程证据，数据库恢复或磁盘操作可能需要检查专属 checkpoint。进程身份同时记录启动时间或操作标记，避免仅凭复用的 PID 判断。
 
@@ -1511,7 +1468,7 @@ traceId 贯穿 React 请求、控制 API、TenantData、Queue、DO、connector �
 
 ## D.1 产品范围与使用旅程
 
-本附录将功能迁移转成产品行为与验收条目。首版采用 XC React/Next.js 前端、Cloudflare 控制面及原 Go core/agent + connector；覆盖当前 34 个公开路由组和附录 B 的组外入口。P0–P5 为首版实施阶段，P6 去 core 独立推进。系统 OTA、OTA-DU 与 Yocto 真机交付按附录 E 的候选扩展管理，不因引用 PRD 自动成为首版门禁。
+本附录供产品、开发和验收人员从用户旅程追到角色、需求、设备状态与适用环境。范围基线见[附录 B](#附录-b--v2-源码基线与完整迁移矩阵)，首版与后续退役的阶段边界见 [§14](#14-迁移路线与任务级工作包)，系统 OTA、OTA-DU 和 Yocto 的选入条件见[附录 E](#附录-e--可选系统-ota-与-yocto-扩展)。
 
 主要旅程：建立租户与授权 → 预登记设备并发放一次性凭证 → 安装注册 → 首次连接与能力探测 → 查看资源 → 发起任务、文件传输或终端 → 跟踪结果与告警 → 核对未知结果 → 升级、恢复与退役。操作页面固定当前租户和节点；切换上下文时取消旧订阅并重新授权，运行任务仍可在任务中心追踪。
 
@@ -1534,16 +1491,16 @@ REQ 是产品追踪编号，不替代附录 B 的路由组和逐端点台账。�
 
 | 需求 | 产品交付与完成条件 | 对应范围 / 阶段 | AC / FI / CAP / NET 证据 |
 |---|---|---|---|
-| REQ01 身份与权限 | 登录、会话、成员和节点授权可撤销；深链接同样鉴权；安全对抗输入不越权、不泄密 | §10、§13.1、B.3、A.12 / P0–P1、P3 | AC-AUTH、FI-AUTH、AC-SEC、FI-SEC、CAP-03、NET-AUTH |
+| REQ01 身份与权限 | 登录、会话、成员和节点授权可撤销；深链接同样鉴权；安全对抗输入不越权、不泄密 | §10、§13.1、B.3、A.12 / P0–P1、P3 | AC-AUTH、AC-UI、FI-AUTH、AC-SEC、FI-SEC、CAP-03、NET-AUTH |
 | REQ02 设备生命周期 | DEV01、DEV02、DEV03、DEV04、DEV05、DEV06、DEV07、DEV08 可操作、可诊断；连接与健康分开展示 | B.5.1、附录 A.2 / P1–P5 | AC-LIFE、FI-LIFE、CAP-04、NET-REG |
 | REQ03 任务与审计 | commandId 跨页追踪，关联本地 taskId；失败、取消与未知结果不混用 | §8、§13.5、B.5.4 / P2–P3 | AC-CMD、FI-CMD、CAP-01、NET-CMD |
-| REQ04 终端与实时流 | 主机、SSH、容器 exec、日志及 console 按能力开放；租约与断线行为可验证 | §9、B.5.3 / P3–P4 | AC-TERM、FI-TERM、CAP-02、NET-TERM |
+| REQ04 终端与实时流 | 主机、SSH、容器 exec、日志及 console 按能力开放；租约与断线行为可验证 | §9、B.5.3 / P3–P4 | AC-TERM、AC-STREAM、FI-TERM、FI-LEASE、CAP-02、NET-TERM |
 | REQ05 文件与资源传输 | 文件操作、分片传输、分享和备份制品可校验、取消及清理 | §11、§13.2、B.4 / P3–P4 | AC-FILE、FI-FILE、CAP-02、NET-R2 |
 | REQ06 主机可观测与工具 | 概览、监控、日志、进程、防火墙和系统工具保留适用能力 | §13.2、B.4 / P2、P4 | AC-HOST、FI-HOST、CAP-01、NET-AGENT |
-| REQ07 应用与运行资源 | 容器、应用、网站、运行环境和数据库真实完成操作及失败恢复 | §13.2、B.4 / P4 | AC-APP、FI-APP、CAP-01、NET-AGENT |
+| REQ07 应用与运行资源 | 容器、应用、网站、运行环境和数据库真实完成操作及失败恢复 | §13.2、B.4 / P4 | AC-APP、AC-DOMAIN、FI-APP、CAP-01、NET-AGENT |
 | REQ08 计划与配置 | 脚本、常用命令、计划、证书和告警有配置版本与应用回执；离线策略明确 | §13.4、B.3–B.4 / P3–P4 | AC-LIFE、FI-CONFIG、CAP-04、NET-POLICY |
 | REQ09 VM、AI 与 MCP | 按公开 provider 与实际硬件验收；私有缺口显式处置，MCP 不绕过授权 | §13.2、B.5.6–B.7 / P4 | AC-MCP、FI-AUTH、CAP-01、NET-MCP |
-| REQ10 安装与恢复 | 保留 core 的安装、升级、回滚、快照、数据迁移和退役闭环 | §12、B.5.5 / P5 | AC-RECOVERY、FI-RECOVERY、CAP-04、NET-R2 |
+| REQ10 安装与恢复 | 保留 core 的安装、升级、回滚、快照、数据迁移和退役闭环 | §12、B.5.5 / P5 | AC-RECOVERY、FI-RECOVERY、FI-RESTORE、CAP-04、NET-R2 |
 | REQ11 容量与恢复余量 | 单租户 10,000 节点、D1/DO/Queue 水位、归档和恢复余量分别有实测门禁 | §15.1、§15.3.5 / P0–P5 | AC-CAP、FI-CAP、CAP-01、CAP-02、CAP-03、CAP-04、NET-CAP |
 | REQ12 链路可达性与延迟 | API、Relay、R2、包源及国内/海外路径按可达性、延迟和失败切换验收 | §9、§15.3.7 / P0–P4 | AC-NET、FI-NET、CAP-02、NET-01、NET-02、NET-03、NET-04 |
 

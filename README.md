@@ -1,36 +1,16 @@
 # AngelFleet PRD
 
-1Panel v2 Cloudflare 控制面技术方案与静态文档站。
+1Panel v2 Cloudflare 控制面的实施设计。首版保留节点上的 Go core/agent，由新增的 connector 主动连云。
 
-**团队分享入口：[Go Agent 研发计划](https://xcangelwatch.github.io/AngelFleetPRD/go-agent-development-plan.html)**。同事可以在这里查看首个里程碑、任务负责人、依赖关系、工作量和验收条件。
+**给研发和测试同事分享[Go Agent 研发计划](https://xcangelwatch.github.io/AngelFleetPRD/go-agent-development-plan.html)。** 页面列出 19 项任务的主责、前置、工时和完成判据。可直接分享单项，例如 [GA-04 节点身份与服务启动](https://xcangelwatch.github.io/AngelFleetPRD/go-agent-development-plan.html#ga-04)。
 
-设计版本为 **2.4**，内容覆盖主体章节及附录 A–E，包括 XC React 前端复用、原 Go core/agent 功能迁移、Cloudflare 控制面、可靠任务协议、产品与设备生命周期、单租户 1 万节点验收条件，以及独立选入的系统 OTA / Yocto 扩展。
-
-文档公开不代表平台功能、节点链路或容量验收已完成；协议参数和目标容量仍以文档中的阶段验收条件为准。
-
-## 在线阅读
-
-| 要做的事 | 阅读页面 |
+| 阅读目的 | 入口 |
 |---|---|
-| 领取 GA 任务、核对依赖和排期 | [Go Agent 研发计划](https://xcangelwatch.github.io/AngelFleetPRD/go-agent-development-plan.html) |
-| 确认首版范围、架构决策和 P0–P6 路线 | [主方案](https://xcangelwatch.github.io/AngelFleetPRD/) |
-| 追踪控制台、云端与 1Panel 的实际调用边界 | [技术详细设计](https://xcangelwatch.github.io/AngelFleetPRD/technical-design.html) |
-| 联调节点注册、建连和首次采样 | [GA-01 节点接口契约](https://xcangelwatch.github.io/AngelFleetPRD/go-agent-interface-contract.html) |
-| 核对 Go 操作入口、适配改动和执行证据 | [Go 操作台账](https://xcangelwatch.github.io/AngelFleetPRD/operation-ledger.html) |
-| 查看测试场景、预期结果和待填的实测证据 | [联调验收记录](https://xcangelwatch.github.io/AngelFleetPRD/implementation-review.html) |
+| 确认产品范围、架构、里程碑和当前可领任务 | [主方案](https://xcangelwatch.github.io/AngelFleetPRD/) · [研发计划](https://xcangelwatch.github.io/AngelFleetPRD/go-agent-development-plan.html) |
+| 实现调用链、核对注册、建连与采样报文 | [技术详细设计](https://xcangelwatch.github.io/AngelFleetPRD/technical-design.html) · [节点契约](https://xcangelwatch.github.io/AngelFleetPRD/go-agent-interface-contract.html) |
+| 查 Go 入口、核对操作范围、登记真机证据 | [Go 操作台账](https://xcangelwatch.github.io/AngelFleetPRD/operation-ledger.html) · [联调验收记录](https://xcangelwatch.github.io/AngelFleetPRD/implementation-review.html) |
 
-## 维护入口
-
-- [文档目录](docs/README.md) 说明每个结果文件的职责、权威性和推荐阅读顺序。
-- [Cloudflare 平台约束快照](docs/platform-constraints.md) 集中记录官方限制、抓取日期和 P0 复核规则。
-- [威胁模型](docs/angelfleetprd-threat-model.md) 分开描述当前静态发布链和目标控制面的安全边界。
-- [命令状态定义](docs/command-state.json) 是状态图与转移检查使用的机器可读基线。
-- [验收 ID 注册表](docs/acceptance-ids.json) 是 AC/FI/CAP/NET/DEV/P6 验收编号的唯一登记来源。
-- [站点元数据](docs/site-meta.json) 是站点版本、发布状态和构建元数据的唯一来源。
-- [在线文档站](https://xcangelwatch.github.io/AngelFleetPRD/) 支持章节导航、全文搜索、流程图、打印和 Markdown 下载。
-- 生成结果统一位于 `dist/`：源文档、机器契约、平台约束、威胁模型和 `build-manifest.json` 均由 `npm run build` 生成。
-- 六个阅读页面均由对应 Markdown 源文件构建，支持全文搜索、章节直达和原文下载。
-- 更新方案结论时，应同步更新代码复用输入、验收证据和机器契约；发布网页与实施验收分别核对。
+维护者按[文档目录](docs/README.md)定位要修改的源文件。网页、全文搜索、Markdown 下载和打印视图共用同一份正文。
 
 ## 本地构建
 
@@ -50,17 +30,6 @@ npm run preview
 仓库使用 GitHub Actions 构建并部署到 GitHub Pages。推送 `main` 后，工作流运行 `npm ci`、构建与检查，再发布 `dist/`。仓库的 **Settings → Pages → Source** 应设为 **GitHub Actions**。
 
 站点是纯静态文件，不使用后端服务、用户登录、第三方统计或运行时 CDN。Mermaid 随站点打包；禁用 JavaScript 时仍能阅读正文、表格和流程源码。
-
-## 文件结构
-
-```text
-docs/technical-plan.md   完整方案内容
-src/                    文档站样式与交互
-scripts/build.mjs       静态页面与图形资源构建
-scripts/check.mjs       发布内容检查
-scripts/preview.mjs     本地静态预览
-.github/workflows/      GitHub Pages 部署
-```
 
 ## 引用与权利
 

@@ -48,11 +48,46 @@ const endpoints = [
   ['nodes.list', 'GET', tenant + '/nodes', 200], ['node.read', 'GET', node, 200], ['command.read', 'GET', command, 200]
 ];
 for (const [id, method, path, status] of endpoints) {
-  assert.deepEqual([http[id].request.method, http[id].request.path, http[id].response.status], [method, path, status], id);
+  const {request, response} = http[id];
+  assert.deepEqual([request.method, request.path, response.status], [method, path, status], id);
+  const headers = new Headers(request.headers);
+  if (path.startsWith(tenant + '/')) {
+    assert.equal(headers.get('Cookie'), 'af_session=${USER_SESSION}', id + ' tenant session');
+    if (method === 'POST') {
+      assert.equal(headers.get('Origin'), fixture.exampleOrigin, id + ' same origin');
+      assert.equal(headers.get('X-CSRF-Token'), '${CSRF_TOKEN}', id + ' session CSRF');
+      assert(headers.get('Idempotency-Key')?.trim(), id + ' idempotency key');
+    }
+  }
 }
 
+const issued = http['enrollment.issue'];
+assert.equal(issued.request.body.nodeId, http['node.create'].response.body.nodeId);
+assert.equal(issued.response.body.nodeId, identity.nodeId);
+assert.equal(issued.request.body.nodeId, identity.nodeId);
+const connected = http['connect.prove'].response.body;
+assert.deepEqual(pick(connected, [...identityKeys, 'keyVersion']), pick(enrolled, [...identityKeys, 'keyVersion']));
+assert.equal(connected.protocolVersion, http['connect.prove'].request.body.protocolVersion);
+for (const id of ['enrollment.issue','enroll.challenge','enroll.prove','connect.challenge','connect.prove']) {
+  assert.equal(new Headers(http[id].response.headers).get('Cache-Control'), 'no-store', id + ' cache policy');
+}
+assert(issued.response.body.ticket && connected.connectTicket);
+const upgrade = http['connect.upgrade'];
+assert.equal(new Headers(upgrade.request.headers).get('Authorization'), 'Bearer ' + connected.connectTicket);
+for (const side of [upgrade.request, upgrade.response]) {
+  const headers = new Headers(side.headers);
+  assert.equal(headers.get('Sec-WebSocket-Protocol'), 'angelfleet.v1');
+  assert.equal(headers.get('Upgrade')?.toLowerCase(), 'websocket');
+  assert.equal(headers.get('Connection')?.toLowerCase(), 'upgrade');
+}
+
+function decodeBase64Url(encoded) {
+  const bytes = Buffer.from(encoded, 'base64url');
+  assert.equal(bytes.toString('base64url'), encoded, 'Expected unpadded base64url');
+  return bytes;
+}
 const rawKey = http['enroll.challenge'].request.body.publicKey;
-const rawBytes = Buffer.from(rawKey, 'base64url');
+const rawBytes = decodeBase64Url(rawKey);
 assert.equal(rawBytes.length, 32);
 assert.equal(enrolled.publicKeyHash, digest(rawBytes));
 const key = await webcrypto.subtle.importKey('raw', rawBytes, 'Ed25519', false, ['verify']);
@@ -66,7 +101,7 @@ for (const [challenge, prove, purpose] of [
 ]) {
   const offer = challenge.response.body;
   const proof = prove.request.body;
-  const bytes = Buffer.from(offer.proofInput, 'base64url');
+  const bytes = decodeBase64Url(offer.proofInput);
   const signed = JSON.parse(bytes.toString('utf8'));
   assert.equal(bytes.toString('utf8'), canonical(signed));
   assert.equal(offer.algorithm, 'Ed25519');
@@ -86,6 +121,9 @@ for (const [challenge, prove, purpose] of [
   challengesSeen.add(challengeId);
   noncesSeen.add(signed.nonce);
   if (purpose === 'enroll') {
+    for (const {request} of [challenge, prove]) {
+      assert.equal(new Headers(request.headers).get('Authorization'), 'Bearer ' + issued.response.body.ticket);
+    }
     assert.equal(proof.publicKey, rawKey);
     assert.equal(signed.enrollmentId, http['enrollment.issue'].response.body.enrollmentId);
     assert.equal(proof.enrollmentId, signed.enrollmentId);
@@ -96,9 +134,12 @@ for (const [challenge, prove, purpose] of [
     assert.deepEqual(pick(proof, fields), pick(signed, fields));
     assert.equal(signed.protocolVersion, proof.protocolVersion);
   }
-  assert(await webcrypto.subtle.verify('Ed25519', key, Buffer.from(signature, 'base64url'), bytes),
+  const signatureBytes = decodeBase64Url(signature);
+  assert.equal(signatureBytes.length, 64);
+  assert(await webcrypto.subtle.verify('Ed25519', key, signatureBytes, bytes),
     'Invalid Ed25519 signature for ' + challengeId);
 }
+assert.equal(recovery[1].response.status, 200);
 assert.deepEqual(recovery[1].response.body, enrolled);
 assert.deepEqual(cases['recover-lost-enroll-response'].assert, {newBindings:0, newSuccessAudits:0});
 
@@ -189,6 +230,11 @@ assert.deepEqual(cases['stale-epoch'].input, ws.ready);
 assert(BigInt(cases['stale-epoch'].assert.highestEpoch) > BigInt(epoch));
 assert.deepEqual(cases['stale-epoch'].output, {webSocketCloseCode:1008, reason:'STALE_EPOCH'});
 assert.deepEqual(cases['replay-command'].request, submitted.request);
+assert.equal(cases['replay-command'].response.status, submitted.response.status);
 assert.deepEqual(cases['replay-command'].response.body, {...submitted.response.body, idempotencyReplay:true});
+const mismatch = cases['command-key-mismatch'].request;
+assert.notEqual(mismatch.body.resourceVersion, submitted.request.body.resourceVersion);
+assert.deepEqual(mismatch, {...submitted.request, body:{...submitted.request.body, resourceVersion:mismatch.body.resourceVersion}});
+assert.equal(cases['unauthorized-node'].request.path, http['command.read'].request.path);
 assert.deepEqual(cases['await-d1-commit'].assert, {sendResultCommitted:false, keepLocalResult:true, resendIdentity:resultRef});
 console.log('Verified GA-01 HTTP/WS timeline, 3 Ed25519 proofs, 4 SHA-256 vectors, command states and sampling cases.');
