@@ -2,7 +2,7 @@
 
 AngelFleet 在云端控制台集中管理选定的 1Panel 运维能力。首批验收节点接入、CPU 与内存概览及审计。Linux 节点继续复用现有 Go core/agent。
 
-**[产品 PRD](https://xcangelwatch.github.io/AngelFleetPRD/product-prd.html) · [1Panel 功能导图](https://xcangelwatch.github.io/AngelFleetPRD/1panel-feature-map.html) · [首批排期与甘特图](https://xcangelwatch.github.io/AngelFleetPRD/go-agent-development-plan.html#m1-排期与甘特图) · [三批派工总览](https://xcangelwatch.github.io/AngelFleetPRD/go-agent-development-plan.html#三批派工总览)**
+**[产品 PRD](https://xcangelwatch.github.io/AngelFleetPRD/product-prd.html) · [本期功能导图](https://xcangelwatch.github.io/AngelFleetPRD/1panel-feature-map.html) · [首批排期与甘特图](https://xcangelwatch.github.io/AngelFleetPRD/go-agent-development-plan.html#m1-排期与甘特图) · [三批派工总览](https://xcangelwatch.github.io/AngelFleetPRD/go-agent-development-plan.html#三批派工总览)**
 
 | 阅读目的 | 入口 |
 |---|---|

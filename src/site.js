@@ -75,14 +75,68 @@ updateLocation();
 document.querySelector('.back-top').addEventListener('click', () => { window.scrollTo({top:0,behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth'}); });
 document.querySelector('.print-button').addEventListener('click', event => { event.preventDefault(); window.print(); });
 
+function drawFeatureLinks(canvas, phases) {
+  const layer = canvas.querySelector('.feature-links');
+  const bounds = layer.getBoundingClientRect();
+  if (!bounds.width || !bounds.height) return;
+  layer.setAttribute('viewBox', `0 0 ${bounds.width} ${bounds.height}`);
+  const root = canvas.querySelector('.feature-root');
+  const svgElement = name => document.createElementNS('http://www.w3.org/2000/svg', name);
+
+  function edge(node, direction, inset = 0) {
+    const box = node.getBoundingClientRect();
+    const x = direction === 1 ? box.right - inset : box.left + inset;
+    return [x - bounds.left, box.top + box.height / 2 - bounds.top];
+  }
+
+  function connect(group, [fromX, fromY], [toX, toY]) {
+    const middle = (fromX + toX) / 2;
+    const path = svgElement('path');
+    path.setAttribute('d', `M${fromX},${fromY} C${middle},${fromY} ${middle},${toY} ${toX},${toY}`);
+    group.append(path);
+  }
+
+  const groups = [];
+  for (const phase of phases) {
+    const group = svgElement('g');
+    group.dataset.phase = phase.dataset.phase;
+    const direction = phase.closest('.feature-side-left') ? -1 : 1;
+    const title = phase.querySelector('.feature-phase-title');
+    connect(group, edge(root, direction), edge(title, -direction));
+    for (const domain of phase.querySelectorAll('.feature-domain:not([hidden])')) {
+      const summary = domain.querySelector('summary');
+      const endpoint = edge(summary, -direction, 10);
+      connect(group, edge(title, direction), endpoint);
+      if (domain.open) {
+        for (const leaf of domain.querySelectorAll('.feature-operations li')) {
+          connect(group, endpoint, edge(leaf, -direction, 3));
+        }
+      }
+    }
+    groups.push(group);
+  }
+  layer.replaceChildren(...groups);
+}
+
 function setupFeatureTree(tree) {
   const tools = tree.querySelector('.feature-tools');
   const filter = tools.querySelector('input');
   const toggle = tools.querySelector('button');
   const featureStatus = tree.querySelector('.feature-status');
-  const branches = [...tree.querySelectorAll('.feature-branch')];
-  const branchText = branches.map(branch => branch.textContent.toLowerCase());
+  const canvas = tree.querySelector('.feature-canvas');
+  const phases = [...canvas.querySelectorAll('.feature-phase')];
+  const branches = [...canvas.querySelectorAll('.feature-domain')];
+  const branchText = branches.map(branch => `${branch.closest('.feature-phase').querySelector('h3').textContent} ${branch.textContent}`.toLowerCase());
   let previousOpen;
+  let drawFrame = 0;
+
+  function scheduleDraw() {
+    if (drawFrame) return;
+    drawFrame = requestAnimationFrame(() => {
+      drawFrame = 0;
+      drawFeatureLinks(canvas, phases);
+    });
+  }
 
   const visibleBranches = () => branches.filter(branch => !branch.hidden);
   function updateToggle() {
@@ -93,6 +147,7 @@ function setupFeatureTree(tree) {
 
   function applyFilter() {
     const terms = filter.value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    tree.classList.toggle('is-filtered', terms.length > 0);
     if (terms.length && !previousOpen) previousOpen = branches.map(branch => branch.open);
     branches.forEach((branch, index) => {
       branch.hidden = !terms.every(term => branchText[index].includes(term));
@@ -100,9 +155,12 @@ function setupFeatureTree(tree) {
       else if (previousOpen) branch.open = previousOpen[index];
     });
     if (!terms.length) previousOpen = undefined;
+    phases.forEach(phase => { phase.hidden = !phase.querySelector('.feature-domain:not([hidden])'); });
     const count = visibleBranches().length;
-    featureStatus.textContent = terms.length ? (count ? `找到 ${count} 个功能域` : '未找到功能，试试其他关键词。') : '';
+    canvas.hidden = count === 0;
+    featureStatus.textContent = terms.length ? (count ? `找到 ${count} 个功能分支` : '未找到功能，试试其他关键词。') : '';
     updateToggle();
+    scheduleDraw();
   }
 
   filter.addEventListener('input', applyFilter);
@@ -112,13 +170,16 @@ function setupFeatureTree(tree) {
     visible.forEach(branch => { branch.open = open; });
     updateToggle();
   });
-  branches.forEach(branch => branch.addEventListener('toggle', updateToggle));
+  tree.addEventListener('toggle', () => {
+    updateToggle();
+    scheduleDraw();
+  }, true);
   function revealTarget() {
     let id;
     try { id = decodeURIComponent(location.hash.slice(1)); }
     catch { return; }
     const target = document.getElementById(id);
-    const branch = target?.closest('.feature-branch');
+    const branch = target?.closest('.feature-domain');
     if (!branch || !tree.contains(branch)) return;
     const wasHidden = branch.hidden;
     if (wasHidden) {
@@ -135,6 +196,9 @@ function setupFeatureTree(tree) {
   });
   revealTarget();
   tools.hidden = false;
+  tree.classList.add('is-connected');
+  new ResizeObserver(scheduleDraw).observe(canvas);
+  document.fonts.ready.then(scheduleDraw);
 }
 
 const featureTree = document.querySelector('.feature-tree');

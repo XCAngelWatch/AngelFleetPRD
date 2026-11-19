@@ -36,8 +36,8 @@ const byFile = new Map(pages.map(page => [page.file, page]));
 const {source,html} = byFile.get('index.html');
 const contractHtml = byFile.get('go-agent-interface-contract.html').html;
 const featureMap = byFile.get('1panel-feature-map.html');
-const upstreamFeatures = featureMap.source.split('\n## 1Panel 上游功能\n')[1]?.split('\n## ')[0];
-const featureBranches = [...(upstreamFeatures ?? '').matchAll(/^### (.+)$/gm)].map(match => match[1]);
+const mapSource = featureMap.source.split('\n## 本期功能导图\n')[1]?.split('\n## ')[0] ?? '';
+const featureDomains = [...mapSource.matchAll(/^#### (.+)$/gm)].map(match => match[1]);
 const markdownSources = pages.map(page => page.source).join('\n\n');
 function readSearchData(document) {
   return JSON.parse(document.match(/<script id="search-data" type="application\/json">([\s\S]*?)<\/script>/)?.[1] ?? 'null');
@@ -45,9 +45,12 @@ function readSearchData(document) {
 const searchData = readSearchData(html);
 assert(Array.isArray(searchData),'Expected a site-wide search index');
 const featureTargets = new Map(searchData.filter(record => record.page === featureMap.file).map(record => [record.id, record.title]));
-const renderedBranches = [...featureMap.html.matchAll(/<details class="feature-branch"><summary id="([^"]+)">/g)].map(match => featureTargets.get(match[1]));
-assert(featureBranches.length > 0, 'Missing upstream feature branches');
-assert.deepEqual(renderedBranches, featureBranches, 'Each upstream feature branch must be a disclosure in source order');
+const renderedPhases = [...featureMap.html.matchAll(/<section class="feature-phase" data-phase="([^"]+)"/g)].map(match => match[1]);
+const renderedDomains = [...featureMap.html.matchAll(/<details class="feature-domain"><summary id="([^"]+)">/g)].map(match => featureTargets.get(match[1]));
+assert.deepEqual(renderedPhases, ['m1', 'follow', 'core', 'ops'], 'Feature map must show the four in-scope phases in delivery order');
+assert(featureDomains.length > 0, 'Missing scoped feature domains');
+assert.deepEqual(renderedDomains, featureDomains, 'Each scoped feature domain must be a disclosure in source order');
+assert(featureMap.html.includes('id="1panel-上游功能"'), 'Previously published feature map links must reach the current map');
 const bodyChapterCount = (source.match(/^# \d+\./gm) || []).length;
 const appendixCount = (source.match(/^# 附录 [A-E]/gm) || []).length;
 assert.equal(manifest.chapters.length,bodyChapterCount + appendixCount,'Manifest chapter count must follow source headings');

@@ -145,7 +145,7 @@ async function readDocument(markdown, file, label, description) {
 
 const documents = await Promise.all([
   readDocument('product-prd.md', 'product-prd.html', '产品 PRD', 'AngelFleet 的用户旅程、1Panel 功能迁移范围、三批交付与试点验收。'),
-  readDocument('1panel-feature-map.md', '1panel-feature-map.html', '功能导图', '展开 1Panel 的 16 个功能域，查看 AngelFleet 迁移范围、阶段和验收入口。'),
+  readDocument('1panel-feature-map.md', '1panel-feature-map.html', '功能导图', '查看 AngelFleet 本期计划迁移的 1Panel 功能、各阶段工单及验收依据。'),
   readDocument('technical-plan.md', 'index.html', '技术方案', '1Panel v2 Cloudflare 控制面技术方案，涵盖 XC React、Go 功能迁移、节点协议与单租户 1 万节点验收基线。'),
   readDocument('technical-design.md', 'technical-design.html', '技术详细设计', '对照 1Panel 前端、core 与 agent 的源码入口，说明节点采样、命令执行与结果对账的实现边界，附注册、终端、制品与故障恢复验收场景。'),
   readDocument('go-agent-interface-contract.md', 'go-agent-interface-contract.html', '节点契约', 'GA-01 确定 Go Agent 的源码仓库与模块目录，并给出节点注册、建立连接及首次可信采样的 HTTP 与 WSS 联调示例。'),
@@ -188,29 +188,42 @@ md.renderer.rules.link_open = (tokens, index, options, env, self) => {
   return self.renderToken(tokens, index, options);
 };
 
-function renderGroup(group, doc) {
-  if (doc === featureMap && group.heading?.id === '1panel-上游功能') {
-    const branches = group.tokens.flatMap((token, index) => token.type === 'heading_open' && token.tag === 'h3' ? [index] : []);
-    const render = tokens => md.renderer.render(tokens, md.options, doc);
-    const details = branches.map((start, index) => {
-      const heading = group.tokens[start];
-      const title = group.tokens[start + 1].content;
-      const body = render(group.tokens.slice(start + 3, branches[index + 1]));
-      return `<details class="feature-branch"><summary id="${heading.attrGet('id')}">${escape(title)}<svg class="feature-connector" viewBox="0 0 100 32" preserveAspectRatio="none" aria-hidden="true" focusable="false"><path d="M0 16 C44 16 58 28 100 28" fill="none" vector-effect="non-scaling-stroke"/></svg></summary><div class="feature-branch-body">${body}</div></details>`;
+function renderFeatureTree(group, doc) {
+  const headings = (tokens, tag) => tokens.flatMap((token, index) => token.type === 'heading_open' && token.tag === tag ? [index] : []);
+  const render = tokens => md.renderer.render(tokens, md.options, doc);
+  const phases = headings(group.tokens, 'h3');
+  const sides = phases.map((start, index) => {
+    const id = group.tokens[start].attrGet('id');
+    const [code, ...name] = group.tokens[start + 1].content.split(' ');
+    const phaseTokens = group.tokens.slice(start + 3, phases[index + 1]);
+    const domains = headings(phaseTokens, 'h4');
+    const details = domains.map((position, domain) => {
+      const anchor = phaseTokens[position].attrGet('id');
+      const title = phaseTokens[position + 1].content;
+      const body = render(phaseTokens.slice(position + 3, domains[domain + 1]));
+      return `<details class="feature-domain"><summary id="${anchor}">${escape(title)}</summary><div class="feature-operations">${body}</div></details>`;
     }).join('\n');
-    return `${render(group.tokens.slice(0, branches[0]))}
-      <div class="feature-tree">
-        <div class="feature-tools" hidden>
-          <div class="feature-filter"><label for="feature-filter">查找上游功能</label><div class="feature-search-field">${searchIcon}<input type="search" id="feature-filter" placeholder="例如 Docker、MCP、快照"></div></div>
-          <button class="feature-toggle" type="button">全部展开</button>
-        </div>
-        <p class="feature-status" role="status"></p>
-        <div class="feature-canvas">
-          <div class="feature-root"><strong>1Panel v2</strong><span>${branches.length} 个功能域</span></div>
-          <div class="feature-branches">${details}</div>
-        </div>
-      </div>`;
-  }
+    return `<section class="feature-phase" data-phase="${escape(code.toLowerCase())}" aria-labelledby="${id}"><h3 class="feature-phase-title" id="${id}"><strong>${escape(code)}</strong> ${escape(name.join(' '))}</h3><div class="feature-domains">${details}</div></section>`;
+  });
+  const midpoint = Math.ceil(sides.length / 2);
+  return `<span class="feature-legacy-anchor" id="1panel-上游功能" aria-hidden="true"></span>${render(group.tokens.slice(0, phases[0]))}
+    <div class="feature-tree">
+      <div class="feature-tools" hidden>
+        <div class="feature-search-field">${searchIcon}<input type="search" id="feature-filter" aria-label="查找本期功能" placeholder="查找功能，如 Docker、备份"></div>
+        <button class="feature-toggle" type="button">全部展开</button>
+      </div>
+      <p class="feature-status" role="status"></p>
+      <div class="feature-canvas">
+        <svg class="feature-links" aria-hidden="true" focusable="false"></svg>
+        <div class="feature-root"><strong>AngelFleet</strong><span>本期迁移</span></div>
+        <div class="feature-side feature-side-left">${sides.slice(0, midpoint).join('\n')}</div>
+        <div class="feature-side feature-side-right">${sides.slice(midpoint).join('\n')}</div>
+      </div>
+    </div>`;
+}
+
+function renderGroup(group, doc) {
+  if (doc === featureMap && group.heading?.id === '本期功能导图') return renderFeatureTree(group, doc);
   return md.renderer.render(group.tokens, md.options, doc)
     .replace(/<table(?: class="(gantt-table)")?>/g, (tag, gantt) => `<div class="table-scroll${gantt ? ' gantt-scroll' : ''}" role="region" aria-label="${gantt ? 'M1 甘特图，可横向滚动' : '可横向滚动的数据表'}" tabindex="0">${tag}`)
     .replace(/<\/table>/g, '</table></div>');
@@ -278,11 +291,13 @@ function renderPage(doc) {
 <button class="back-top" type="button" hidden>返回顶部</button>
 <dialog class="search-dialog" aria-labelledby="search-label"><form class="search-form"><label id="search-label" for="search-input" hidden>搜索完整方案</label><input id="search-input" type="search" placeholder="搜索功能、协议或验收条件" autocomplete="off"><button class="close-search" type="button">关闭</button></form><p class="search-status" role="status">输入关键词查找章节、功能和协议。</p><ul class="search-results"></ul></dialog>
 <script id="search-data" type="application/json">${JSON.stringify(searchRecords).replaceAll('<','\\u003c')}</script>
-<script type="module" src="assets/site.js"></script>
+<script type="module" src="assets/site.js?v=${siteScriptVersion}"></script>
 </body></html>`;
 }
 await rm('dist',{recursive:true,force:true});
 await mkdir('dist/assets',{recursive:true});
+const bundle = await build({entryPoints:['src/site.js','src/mermaid.js'],outdir:'dist/assets',bundle:true,splitting:true,format:'esm',minify:true,target:'es2022',legalComments:'linked',chunkNames:'chunks/[name]-[hash]',logLevel:'warning',metafile:true});
+const siteScriptVersion = createHash('sha256').update(await readFile('dist/assets/site.js')).digest('hex').slice(0, 12);
 for (const doc of documents) {
   await writeFile(`dist/${doc.file}`, renderPage(doc));
 }
@@ -300,7 +315,6 @@ await writeFile('dist/robots.txt',`User-agent: *\nAllow: /\nSitemap: ${site}site
 const sitemapEntries = documents.map(doc => `<url><loc>${doc === plan ? site : site + doc.file}</loc></url>`).join('');
 await writeFile('dist/sitemap.xml',`<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${sitemapEntries}</urlset>\n`);
 await copyFile('dist/index.html','dist/404.html');
-const bundle = await build({entryPoints:['src/site.js','src/mermaid.js'],outdir:'dist/assets',bundle:true,splitting:true,format:'esm',minify:true,target:'es2022',legalComments:'linked',chunkNames:'chunks/[name]-[hash]',logLevel:'warning',metafile:true});
 await mkdir('dist/licenses',{recursive:true});
 const packages = new Set(Object.keys(bundle.metafile.inputs).filter(path => path.startsWith('node_modules/')).map(path => {
   const pieces = path.slice('node_modules/'.length).split('/');

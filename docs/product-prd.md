@@ -25,7 +25,7 @@ flowchart TD
 
 ## 哪些 1Panel 功能分批迁移
 
-从 [1Panel 功能导图](1panel-feature-map.md)查看上游功能、各阶段迁移范围及对应工单。
+从 [本期功能导图](1panel-feature-map.md)查看各阶段计划迁移的能力及对应工单。
 
 | 批次 | 选定能力 | 可以开放的条件 |
 |---|---|---|
