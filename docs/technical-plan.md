@@ -6,12 +6,14 @@ AngelFleetConsole 负责控制台和云端 API。Linux 节点保留 1Panel Go co
 
 ## 执行摘要
 
+**本轮迁移范围已调整。** 网站管理、应用商店和 AI 相关能力移出。容器、已有或远端数据库、通用备份与面板快照继续保留。[查看 12 个功能域的迁移清单](#137-本轮非-ai-功能迁移清单) · [查看派工变化](go-agent-development-plan.md#分阶段里程碑)
+
 **2026-11-19 更新 · GA-08 至 GA-10 的逐指标读取方案已定稿。** 第二次采样只有 CPU 成功时，清空缓存后，控制台应显示第二次的 CPU，以及第一次的内存值、采样时间和来源命令。联调样例已验证，真机验收待执行。[接口请求与响应](go-agent-interface-contract.md#53-逐指标读取与冷启动展示) · [两次采样的真机验收](spaces/implementation-review.md#两次采样后的无缓存验收)
 
 | 决策 | 对交付的影响 |
 |---|---|
 | 首个里程碑 M1 | 在两个租户各自的控制台看到本节点 Go 采集的 CPU、内存与采样时间，断线后能辨认最后好值。GA-01 已验证契约和样例，真机结果由 GA-10 验收。[Go Agent 派工单](go-agent-development-plan.md) |
-| 首版产品 P0–P5 | Cloudflare 管身份、授权、编排和审计；Go 执行主机操作。覆盖 34 个公开路由组及组外入口。单租户 10,000 节点须单独压测。[功能完成标准](#5-功能完成标准与容量边界) |
+| 首版产品 P0–P5 | 保留主机运维、容器与数据库等非 AI 业务，移除网站管理及应用商店。各域的接入、复用和退出范围见[本轮非 AI 功能迁移清单](#137-本轮非-ai-功能迁移清单)。单租户 10,000 节点单独压测。[功能完成标准](#5-功能完成标准与容量边界) |
 | 可靠执行 | D1 先记录命令，AgentConn 通过已连接的 WSS 投递，Queues 补偿漏投。节点 journal 保存执行事实，响应丢失时按原命令对账。[断线对账](#72-断线后的任务对账) |
 | 后续交付 P6 | 配置、升级和快照恢复可脱离 core 后，独立验收 managed-agent。[退役条件](#b8-后续-core-退役的源码侧验收条件) |
 
@@ -75,9 +77,9 @@ flowchart LR
 | 文件 | R2 制品与对象通道，节点负责落盘和校验 | 分片、续传、恢复与清理完整闭环 |
 | 国内接入 | 受控 CONNECT/L4 代理 | 分别验证控制、终端、文件和升级路径 |
 
-保留 core 的完整功能版本与无 core 的 managed-agent 版本是两个交付层。换用 XC 前端不要求先删除 core；保留 core 也不免除租户隔离、可靠执行、终端撤销和生命周期验证。首版由云端接管常规管理写入，旧本地入口保留为受控兼容或恢复渠道，避免两套管理端同时修改同一资源。
+保留 core 的首版与无 core 的 managed-agent 版本是两个交付层。换用 XC 前端不要求先删除 core；保留 core 也不免除租户隔离、可靠执行、终端撤销和生命周期验证。首版由云端接管常规管理写入，旧本地入口保留为受控兼容或恢复渠道，避免两套管理端同时修改同一资源。
 
-迁移以 9 个 core 路由组、25 个 agent 路由组及终端、文件分享、MCP transport、安装、调度和清理等组外入口为范围。企业私有实现、社区空 provider 和新增 SaaS 能力分别登记处置依据。[逐端点台账要求](#136-逐功能迁移台账)
+上游取证覆盖 9 个 core、25 个 agent 路由组以及终端、文件分享、安装、调度等组外入口。本轮按[本轮非 AI 功能迁移清单](#137-本轮非-ai-功能迁移清单)选择具体操作。混合路由组按端点拆分，私有实现及条件能力保留处置记录。[逐端点台账要求](#136-逐功能迁移台账)
 
 # 2. 当前 v2 与目标系统的差异
 
@@ -89,11 +91,11 @@ flowchart LR
 | agent 读取 core.db，core 读取节点数据库 | 保留原本机兼容栈，云端通过 API 与事件访问 | 用版本化配置投影与显式数据所有权替代共享读取 |
 | core 替换 core、agent、1pctl 二进制 | 受控升级任务记录版本、恢复与结果 | 独立 updater，健康确认与回滚不依赖 core |
 | 快照包含 core.db、core 二进制和服务 | 验证原快照的创建、恢复和节点身份重建 | managed manifest 与旧快照转换 |
-| MCP 存在进程内 HTTP 分发 | 云端准入，节点适配器调用已有执行能力 | 显式操作协议替代 core 内部 dispatch |
+| MCP 存在进程内 HTTP 分发 | Panel MCP、AI MCP 均退出本轮，非 AI 的容器操作直接接入受控业务适配器 | 旧实现仅作源码追溯 |
 | 社区 RBAC、多节点部分方法为空 | 基于 XC 权限基础新增 SaaS 与节点授权 | 不以企业菜单或空 provider 推导能力 |
 | XC 是 React，原 1Panel 是 Vue | 在 XC 组件体系中迁移业务流程和 DTO | 不混入依赖旧登录与路由语义的 Vue 页面 |
 
-现有 agent 已具备部分内部 MCP Docker 与 website 执行入口，迁移应复用这些能力。当前 90 秒终端租约出现在 API_AUTH 分支，浏览器 session 的统一续租需要新增。上述源码位置与前端契约在附录 B 逐项链接。
+现有 agent 的内部 MCP Docker 与 website 入口列入上游盘点，本轮无对应云端入口。当前 90 秒终端租约出现在 API_AUTH 分支，浏览器 session 的统一续租需要新增。上述源码位置与前端契约在附录 B 逐项链接。
 
 # 3. 首版架构与后续演进
 
@@ -149,8 +151,8 @@ DO 使用服务端 `ctx.acceptWebSocket()` 接受连接以支持休眠。connect
 
 | 维度 | 完成条件 | 证据 |
 |---|---|---|
-| 功能覆盖 | 34 路由组及组外入口逐端点有页面、权限、operation、执行器和恢复策略 | 台账、正常/异常/边界用例及适用范围 |
-| 节点上下文与权限 | 切租户/节点不串数据，REST/WSS/文件/分享/MCP及后台任务越权均拒绝 | 缓存、旧响应、资源归属与撤权测试 |
+| 功能覆盖 | 对 §13.7 纳入本轮的端点逐项核对页面、权限、operation、执行器和恢复策略。条件项须先确认目标环境 | 分别列出纳入、待条件确认、共享依赖及排除项；仅纳入项参加功能验收 |
+| 节点上下文与权限 | 切租户/节点不串数据，REST、WSS、文件、分享及后台任务越权均拒绝 | 缓存、旧响应、资源归属与撤权测试 |
 | 可靠执行 | 重复投递复用 commandId，响应丢失后关联原 Go 任务或进入核对 | journal、taskId/操作标记、云端结果与现场事实 |
 | 实时流与文件 | 终端/日志/进程/console可撤销，有界背压；文件可分片、取消、续传、校验和清理 | 租约关闭、输出缺口、摘要与真实恢复记录 |
 | 首版生命周期 | 保留 core 的安装、重启、升级、回滚、恢复和节点退役成立 | 版本、健康探针、身份与任务水位 |
@@ -313,11 +315,11 @@ sequenceDiagram
 
 命令链路的完成条件是云端状态、节点 journal 和主机事实一致；HTTP 202、Queue ACK 或 WSS 已发送都只是中间确认。
 
-每个操作维护版本化 registry，包含 operationName、capability、input/output schema、权限点、资源范围、nodeProfile、风险等级、离线策略、入场有效期、执行期限、幂等类别、资源锁、现场前置条件、恢复核对方法、取消边界、秘密处理和审计字段。connector 将操作映射到明确的 Go 执行器或受控 Unix socket 路由，用户不能指定任意内部 HTTP method/path、身份头或 SQL。下载源、升级包和制品安装使用受控 release/artifact 引用；文件路径、服务名、网站配置和脚本等正常业务参数按各 operation schema 接收，并落实路径边界、资源授权和输入校验，不能将制品规则扩大为所有变更只能传对象引用。
+每个操作维护版本化 registry，包含 operationName、capability、input/output schema、权限点、资源范围、nodeProfile、风险等级、离线策略、入场有效期、执行期限、幂等类别、资源锁、现场前置条件、恢复核对方法、取消边界、秘密处理和审计字段。connector 将操作映射到明确的 Go 执行器或受控 Unix socket 路由，用户不能指定任意内部 HTTP method/path、身份头或 SQL。下载源、升级包和制品安装使用受控 release/artifact 引用；文件路径、服务名和脚本等正常业务参数按各 operation schema 接收，并落实路径边界、资源授权和输入校验，不能将制品规则扩大为所有变更只能传对象引用。
 
 查询返回数据、采样时间和 stale 状态，并设置短超时。新 React 变更操作提交持久意图后返回 HTTP 202 与 commandId，由全局任务中心展示结果。确需保留的 v2 同步接口维持旧成功 DTO，超时返回可查询 operationId，调用方重试复用幂等键。原本返回本地 taskId 的安装、恢复、升级接口映射到 cloudCommandId，不把本地任务创建成功当作业务完成；适配器同时检查 HTTP 状态和 `code/message/data` 中的业务结果。
 
-Panel MCP 在云端提供凭据、工具目录、admission、节点范围和审计，工具操作映射到同一 operation registry。当前进程内 dispatch 改成明确的节点调用，输出大小设限，大结果返回受控对象引用。现有 agent 内部 Docker/website 能力优先复用。AI MCP 服务器管理继续作为节点业务，单独验收其进程、配置和凭据。工具调用产生的破坏性动作遵循与普通 API 相同的权限和恢复规则。[现有 MCP dispatch](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/core/utils/mcpapi/dispatch.go)
+本轮移除 Panel MCP 和 AI MCP 的用户入口、目录与调用链。纳入范围的容器、数据库和主机操作直接使用受控业务 API 和节点适配器。原进程内分发保留源码索引。[现有 MCP dispatch](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/core/utils/mcpapi/dispatch.go)
 
 任务状态、幂等、取消、未知结果和恢复以附录 A.5–A.6、C.1–C.3 为唯一执行语义。本节只保留适配边界：适配器必须持久保存 `cloudCommandId`、`nodeIncarnation`、`intentHash`、`localTaskId` 或 `operationMarker`、checkpoint 和结果摘要；调用前先记录意图，响应丢失时查询原任务或现场证据，不能自动创建第二个未知副作用。无稳定关联的非幂等入口必须补 Go hook，并覆盖调用前、Go 已启动但回执丢失、结果已生成但云端未确认三个故障点。[当前 Go 异步执行](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/agent/app/service/app_install.go)
 
@@ -406,7 +408,7 @@ flowchart LR
     P2 --> M1
     P2 --> P3[P3 命令、终端与可靠执行]
     P1 -.页面集成.-> P3
-    P3 --> P4[P4 全量业务与真实节点]
+    P3 --> P4[P4 入选业务与真实节点]
     P4 --> P5[P5 升级、备份与恢复]
     P5 --> P6[P6 managed-agent / core 退役]
     UI[XC React 复用] -.贯穿.-> P1
@@ -437,30 +439,17 @@ flowchart LR
 
 ## 13.2 运维页面与业务功能
 
-| 功能域 | XC React 交付范围 | Go 复用与适配 |
-|---|---|---|
-| 平台与节点 | 账号、机构、租户、权限、节点注册/分组/版本/能力/停用/退役 | 平台身份云端接管；新增 connector 与节点身份 |
-| 总览监控 | 全局/节点概览、CPU/内存/磁盘/网络/GPU、历史与实时视图 | 保留采集，新增摘要与订阅 |
-| 主机工具 | 系统、SSH、服务、磁盘、防火墙、FTP、Fail2ban、扫描和清理 | 保留执行器，补授权、前置条件、进度和核验 |
-| 终端 | 本机、SSH、容器 exec、会话、重连、结束 | 复用 PTY/SSH，补租约、撤销、背压与恢复 |
-| 文件 | 目录、搜索、编辑、权限、复制移动、压缩、历史、回收站、收藏、分享 | 保留文件操作，重建远程传输与分享授权 |
-| 容器 | 容器、镜像、网络、卷、仓库、Compose、监控、日志、批量更新 | 保留 Docker/Compose，适配任务、exec、文件和流 |
-| 应用商店 | 目录、详情、安装配置、依赖、升级、卸载、已安装应用 | 保留应用服务，关联云端与本地任务 |
-| 网站与 OpenResty | 网站、域名、代理、目录、配置、模板、状态与日志 | 保留配置、校验、重载、失败恢复 |
-| DNS ACME SSL CA | 账户、申请、导入、续期、部署、推送、到期与 CA | 保留 provider，明确凭据和私钥归属 |
-| 数据库 | 实例、库、用户权限、配置、导入导出、备份恢复、工具入口 | 保留驱动与业务，补锁、任务和恢复核验 |
-| 运行环境 | 当前支持的 PHP/Java/Node/Python 等环境、扩展、配置、日志 | 保留安装构建运行，补任务、终端和日志协议 |
-| 进程 | 列表、详情、实时变化、受控终止 | 保留 Go 操作，改受控实时订阅 |
-| 命令与脚本 | 常用命令、分组、导入导出、脚本版本、运行和历史 | 云端目录与授权，节点投影与执行 |
-| 计划任务 | Cron、时区、启停、立即执行、历史和日志 | 节点调度，云端配置投影与离线结果补报 |
-| 备份恢复 | 账户、策略、记录、下载、恢复、快照、旧快照导入 | 保留备份恢复内核，补制品、checkpoint、对账 |
-| 日志审计告警 | 平台审计、节点日志、尾随、策略、渠道、事件处理 | 保留节点采集/规则，新增云端聚合与去重 |
-| 虚拟机 | VM、ISO、模板、网络、存储、启停、快照、console | 保留 KVM，适配能力、文件和 console |
-| AI 与 AI MCP | 当前公开的模型、GPU、vLLM、Agent 与 AI MCP 管理 | 按最新接口复用公开实现；XPack 能力单列 |
-| Panel MCP | 凭据、工具目录、节点范围、准入、审计、结果 | 云端控制，节点复用执行，替换进程内 dispatch |
-| 设置与诊断 | 平台/节点设置、偏好、诊断、升级恢复 | 拆分云端与节点设置，保留本地运行诊断 |
+本轮逐域范围、保留的数据和验收条件见[本轮非 AI 功能迁移清单](#137-本轮非-ai-功能迁移清单)。接入依据为一条完整用户操作：例如容器查看、数据库导出或文件恢复，分别连接 React 页面、授权、Go 执行与结果核验。同一路由组的其他入口仍按各自的产品范围判断。
 
-组外能力一并迁移：公开文件分享的密码、有效期与下载范围；健康探针；local/SSH/container 终端；进程 WS；VM console；脚本运行流；Panel MCP transport 与内部 capabilities；安装器、systemd、1pctl、证书续期、应用商店同步、日志/缓存/临时文件清理。旧静态页面和主题入口由 XC 发布与新平台主题能力承接。
+| 界面或依赖 | 实施边界 |
+|---|---|
+| 控制台与节点 | 沿用 Console 的账号、租户、角色与平台审计。节点注册、连接、授权、运行命令、撤权和回执单独实施。 |
+| 节点日常运维 | 保留 CPU、内存、磁盘、网络、进程、主机工具、终端和文件等面向节点的功能。同一 Supervisor 管理入口由一处实现。 |
+| 容器、数据库与数据保护 | 通过 Docker/Compose、具体数据库引擎和受控归档任务操作原资源。已有安装记录与共享库仅按保留能力访问，独立管理现有容器及数据库。 |
+| 条件能力 | KVM、可选主机工具和特定通知 provider 依据主机能力、版本及授权纳入，逐项留证。 |
+| 排除项 | 网站、OpenResty 专项、站点证书/运行环境/备份链、应用商店、AI、GPU 监控、AI MCP 及 Panel MCP 不提供产品入口，不纳入本轮业务验收。面板或节点连接自身的 TLS、签发与轮换继续纳入安全设计。 |
+
+组外仍需验收的入口包括健康探针、文件分享、终端与进程流、已选脚本运行、安装器、systemd、1pctl 和运维清理。VM console 随 KVM 范围验收。前端主题与发布由 AngelFleetConsole 承接。
 
 ## 13.3 Go 复用边界
 
@@ -474,14 +463,14 @@ flowchart LR
 |---|---|
 | 用户、租户、角色、节点权限、API Key | 云端 |
 | 节点登记、公钥、能力与版本 | 云端目录；节点保管私钥 |
-| 容器、网站、数据库、文件实际状态 | 节点；云端保存查询投影 |
+| 容器、数据库、主机和文件实际状态 | 节点；云端保存查询投影 |
 | 命令意图与平台审计 | 云端 |
 | 执行开始、checkpoint、实际结果 | 节点 journal 与现场证据 |
 | 脚本、模板、Cron 和告警策略 | 云端版本，节点保存已应用投影 |
 | 备份与安装制品 | 对象存储，云端索引与授权 |
 | 执行秘密 | 优先留节点，必要云端副本受保护 |
 
-Cron、证书续期等默认继续由节点调度器执行。云端下发配置版本、展示下一次执行与历史，恢复联网后补报；同一策略不能由云端与节点同时调度。离线期间允许执行的主体是绑定已签名策略版本的 `POLICY_SCHEDULER`，它只执行此前已确认的计划，不等同于本地交互管理写入；未获策略授权的本地 API、MCP、1pctl 和人工维护写入仍受 `CLOUD_MANAGED` fence 拒绝。
+保留的备份、脚本与告警计划默认由节点调度器执行。退出范围的站点续证与商店同步不接入云端调度。云端下发配置版本、展示下一次执行与历史，恢复联网后补报；同一策略不能由云端与节点同时调度。离线期间允许执行的主体是绑定已签名策略版本的 `POLICY_SCHEDULER`，它只执行此前已确认的计划，不等同于本地交互管理写入；未获策略授权的本地 API、MCP、1pctl 和人工维护写入仍受 `CLOUD_MANAGED` fence 拒绝。
 
 ## 13.5 四类接口与执行对账
 
@@ -496,7 +485,7 @@ Cron、证书续期等默认继续由节点调度器执行。云端下发配置�
 
 ## 13.6 逐功能迁移台账
 
-逐端点台账以固定源码为分母，覆盖 router、middleware、handler、前端调用、provider、动态入口、内部接口和后台生命周期；同一路由的不同方法及不同 provider 分开记录。每条绑定需求 ID、React 页面、operation、权限、资源范围、capability、Go 执行器、数据归属、接口类型、恢复/取消方式、旧数据迁移及验收证据。路由组完成要求其所有适用端点均已处置并完成对应验证。
+逐端点台账以固定源码为盘点基线，从 §13.7 纳入的操作形成当期交付分母。取证覆盖 router、middleware、handler、前端调用、provider、动态入口、内部接口和后台生命周期；同一路由的不同方法及不同 provider 分开记录。每条绑定需求 ID、React 页面、operation、权限、资源范围、capability、Go 执行器、数据归属、接口类型、恢复/取消方式、旧数据迁移及验收证据。来源路由全部登记处置后，可复核盘点覆盖率。功能完成率仅统计当期纳入的操作；条件项获选后才加入分母，共享依赖在其所属流程内核验。
 
 处置分类与实施状态分开保存。disposition 使用 REUSE、ADAPT、NEW、UNSUPPORTED、GAP_PRIVATE、RETIRED；status 使用 PLANNED、IN_PROGRESS、BLOCKED、IMPLEMENTED_UNVERIFIED、VERIFIED、ACCEPTED。UNSUPPORTED 必须有适用性证据，GAP_PRIVATE 保留实现缺口，RETIRED 必须记录范围决定和替代入口，均不能自动计为功能通过。已实现但缺少目标环境验证为 IMPLEMENTED_UNVERIFIED；阻塞保留原因、责任和解除条件；ACCEPTED 需要验收记录。
 
@@ -508,17 +497,42 @@ inputSchemaRef,outputSchemaRef,idempotencyClass,reconcileRef,cancelBoundary,
 disposition,targetStage,workPackageId,acceptanceIds,status,evidenceRefs,gapDecision
 ```
 
+## 13.7 本轮非 AI 功能迁移清单
+
+本轮将日常运维入口迁至 AngelFleetConsole。Console 管用户、租户、节点授权、操作意图与审计，节点上的 Go core/agent 继续操作本机资源。**范围从原清单的 14 个业务域收窄到 12 个，其中虚拟机按 KVM 环境选入。** 网站管理、应用商店及其专用流程退出。按原清单末尾的排除项，GPU 监控与 AI、MCP 一同排除。下表给出各域的交付边界；“首批”用于首个可联调版本，“后续”表示仍在迁移范围内，具体排期取决于能力和依赖。
+
+| 保留的功能域 | 需要迁移到 Console 的能力 | Go 与数据边界、验收重点 |
+|---|---|---|
+| 概览 / 仪表盘 | 首批交付节点注册、连接状态、CPU/内存及最后成功时间。后续加系统信息、磁盘 I/O、网络和 Top 进程。快捷目录归入文件管理。 | Go 在采集点产生数值与时间，云端保存逐指标最后有效值；重连、零值、部分失败和跨租户隔离分别验证。主机或面板重启走受控写命令。移除推荐应用、已装应用入口和启动器。[首采契约](go-agent-interface-contract.md#53-逐指标读取与冷启动展示) |
+| 日志与审计 | 首批把登录、授权和命令结果串起来。后续接系统/主机日志、异步任务日志、查询与清理。 | 长日志留节点按授权读取，云端留事件和来源引用。越权读、撤权及清理审计可追溯；站点访问/错误日志随网站域退出。 |
+| 面板设置与安全 | 复用 Console 账号、组织、租户、角色和审计。首批补节点范围与服务端授权；会话、API 凭据及证书策略按目标安全模型适配。主题、语言、菜单、备忘录仅迁实际需要的入口。 | 面板升级、回滚、设备凭据轮换和救援 CLI 保留节点能力；MFA/Passkey、旧配置及凭据兼容需逐项核验。保留面板 TLS 与节点身份认证。历史许可证与上游商业授权分别处理。[Console 现有 API](https://github.com/XCAngelWatch/AngelFleetConsole/tree/df715b38d174b2bdad7a5ab58150c05ead6c5d36/cloudflare/api/src/routes) |
+| 主机管理 | 文件浏览、传输、编辑、权限、回收站/分享；监控、进程、SSH、防火墙、磁盘和挂载分批接入。 | 路径、挂载、主机账户和原始文件留节点。先读后写；停止进程、改防火墙/SSH、改磁盘须单独授权和审计。分享须验证节点归属、失效及撤销。 |
+| 终端 | 本机、SSH 和容器终端；连接配置、常用命令及导入导出。 | Go 持有 PTY 或 SSH 连接。云端发限时授权并审计；续租、撤权和断线应关闭原会话。容器终端与容器管理共用目标 ID。 |
+| 容器管理 | 保留 Docker 容器、镜像、registry、Compose/模板、网络、卷和 daemon 设置。先做清单与状态，再接日志、监控、构建与受控变更。 | Go 调本机 Docker。卷、Compose 文件和 daemon 配置保留原位；共享镜像、网络、卷不能按商店或站点标签批量清除。可靠写操作候选验收为独立测试容器重启，按原容器 ID 对账。[容器执行入口](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/service/container.go#L776-L806) |
+| 数据库 | 保留已有或已登记实例的管理及远端同步。MySQL、PostgreSQL、MongoDB、Redis 分开核对库/用户、权限、状态、配置、CLI 或持久化；每个引擎只开放它实际支持的操作。 | 原面板托管实例可能依赖本机安装记录和 Compose 配置；远端实例按授权连接管理，数据留远端。取消“从商店一键装库”。验收分本机托管与已登记远端，变更按引擎核验。[数据库路由](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/router/ro_database.go) · [本地配置依赖](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/service/database_common.go#L92-L111) |
+| 备份与快照 | 保留数据库与目录备份、备份记录、备份目标/桶和面板快照。对象存储按实际 provider、账号与还原验证逐个开放。 | Go 产出归档，保留来源、摘要和实际任务。单库恢复须回读已知数据；面板快照须另测所含内容、恢复及回滚。历史档可含站点/应用，须可识别依赖和提示，移出站点/应用专用的新建备份与恢复入口。[快照创建](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/service/snapshot_create.go) |
+| 计划任务 | 定时命令/脚本、保留域的数据库和目录备份、通用日志任务、脚本库、导入导出、执行日志与分组。 | 明确云端配置版本和节点调度责任；断网仍按约定执行，重连核对漏跑/重复。历史网站或应用备份、站点日志切割任务列出待处置，禁止自动转成其他作业。[任务分派](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/service/cronjob_helper.go#L97-L139) |
+| 告警通知 | 保留规则、记录、测试和投递结果。先接邮件及已验证的社区自定义 Webhook；短信等渠道按实际 provider 与授权选入。 | 规则可由控制台管理，节点采集和执行；记录触发来源、去重与投递结果。不能把一次测试请求成功计为真实告警已送达。[社区通知实现](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/utils/xpack/helper/alert.go) |
+| 工具箱 | DNS/Hosts、主机名、时区/NTP、Swap、系统凭据设置和清理分批接入。Supervisor 在主机与工具箱共用一个入口；ClamAV、Fail2Ban、FTP 按节点能力开放。 | 复用本机服务和配置；先探测组件与权限。变更后回读状态，提供错误及可恢复证据。移除组件缺失时的商店安装引导。 |
+| 虚拟机（可选） | 有 KVM 且版本/许可满足时，接入 VM 生命周期、镜像、盘、虚拟网络、快照和控制台。 | 单独核对 KVM、存储池、磁盘镜像和 noVNC 会话；用真实来宾及磁盘数据验证恢复。普通节点通过能力探测说明缺项。[虚拟机入口与配额](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/api/v2/vm.go) |
+
+**退出边界。** 网站域移出站点 CRUD、域名、站点 HTTPS/ACME/DNS 账号、站点模板、各语言网站运行环境、反向代理、OpenResty 配置/模块、WAF、站点专用备份/恢复及日志。商店域移出应用目录、推荐、商店同步、安装/升级/卸载、参数配置、应用级备份和自定义商店。已经运行的容器、数据库和挂载卷可从保留域按权限运维。移交时记录原安装关联、历史作业和档案，原资源及历史数据保留。云端需要自有多租户和节点授权；迁入上游企业集群、商业 RBAC、SSO 或私有 provider 须另立范围。
+
+**派工顺序。** 先做 GA-01 至 GA-10 的注册、建连、概览、授权与真机验收。随后用独立测试容器验证可靠写入，再用已登记的隔离测试库验证备份、恢复及回滚。后两项是替代原 OpenResty/网站样板的候选，实施前核定目标权限、操作名、证据和工时；可复用原协议，须重新取得目标场景的执行证据。一个可复现的 MySQL 场景是在同一隔离库写入 A、备份、改为 B，再恢复并回读 A。远端来源也须验证节点上的客户端镜像；快照恢复另验。[当前派工状态](go-agent-development-plan.md) · [MySQL 实例来源](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/service/database_mysql.go#L1628-L1668) · [MySQL 恢复实现](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/service/backup_mysql.go#L112-L226)
+
+**盘点口径。** 本次核对本地 1Panel `dev-v2@aaba86d` 与 Console `main@df715b3`。当前上游 `frontend/src/routers/modules/` 有 13 个 TypeScript 文件，首页和扩展另有注册；附录 B 的 34 个 core/agent 路由组是源码盘点基线。验收以本节保留的具体能力、适用环境和证据逐项计数。数据盘点按配置的安装根目录和实际文件执行；除 core、agent、task、alert 等库，上游还打开监控数据库。core 与 agent 的备份服务各有账号加密写入路径；迁移时按实际账号归属验证备份可读、样本可恢复。[core 备份账号](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/core/app/service/backup.go#L90-L98) · [agent 备份账号](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/service/backup.go#L197-L205)。[前端路由组装](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/frontend/src/routers/router.ts) · [core 数据库初始化](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/core/init/db/db.go) · [agent 数据库初始化](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/init/db/db.go)
+
 # 14. 迁移路线与任务级工作包
 
-2026-11-19 核对本地源码后，P1 与 P2 的首个联合交付定为注册后首次可信采样。先做可在两租户、两台 Linux 节点复验的只读链路，再开放可能改变主机状态的命令。近期工作按[Go Agent 研发计划](go-agent-development-plan.md)逐项派工，重启、备份和恢复按[操作台账](operation-ledger.md)分别留证。
+2026-11-19 核对本地源码后，P1 与 P2 的首个联合交付定为注册后首次可信采样。先做可在两租户、两台 Linux 节点复验的只读链路，再开放可能改变主机状态的命令。近期工作按[Go Agent 研发计划](go-agent-development-plan.md)逐项派工，通用命令、备份和恢复按保留目标派工。旧 OpenResty 重启与网站备份/恢复仅保留历史设计记录，不能凭原工单计入本轮成绩。[操作台账](operation-ledger.md)
 
 | 阶段 | 可交付结果 | 依赖与退出条件 |
 |---|---|---|
-| P0 基线与契约 | 固定源码/工作树、34 组及组外端点、profile、工作区映射、协议与验收台账 | 冻结范围、数据归属、负载和门槛，缺失输入显式记录 |
+| P0 基线与契约 | 固定源码版本，按 34 组及组外入口补齐盘点，对照 §13.7 逐项定范围 | 冻结当期操作、适用环境、协议和证据口径，另列未选与依赖项 |
 | P1 XC 公共前端 | React 身份/权限、租户节点上下文、任务中心、领域 API | 依赖 P0；可与 P2 并行，最终用真实接口验证隔离、深链接和任务跨页 |
 | P2 Go 兼容接入 | 原 core/agent + connector、节点身份、注册与只读纵切 | 依赖 P0；两租户两节点联调、越权拒绝、断线恢复 |
 | P3 公共协议 | 可靠命令、Go 任务关联、取消/核对、终端/流/文件 | 依赖 P2 和冻结契约；与 P1 集成，重复、失联、撤销及校验通过 |
-| P4 全功能迁移 | 第 13 节 React 业务域及 Go 适配 | 依赖所需 P1/P3 能力；各业务域可并行，真实正常/失败/恢复逐项验收 |
+| P4 本轮业务迁移 | 按 §13.7 确认的运维、容器、数据库和数据保护等业务域开发 | 依赖所需 P1/P3 能力；各域可并行，真实正常、失败及恢复逐项验收 |
 | P5 首版生命周期与集成 | 保留 core 的安装、升级回滚、旧数据/快照恢复、轮换退役与运维交接 | 底座可在 P0/P2 后开工；最终汇合 P1–P4，完成功能、容量和恢复门禁 |
 | P6 后续 core 退役 | managed-agent、配置投影、独立 updater、快照转换 | 独立范围与版本；无 core 生命周期及附录 B 条件全部通过 |
 
@@ -535,7 +549,7 @@ P0–P5 的首版保留本机 core/agent。P6 切换时逐节点冻结写入、�
 | AC-UI 权限与上下文 | 登录、节点切换、深链接、缓存隔离、任务跨页、各入口越权 | React 与真实 API 端到端证据 |
 | AC-CMD / FI-CMD 可靠命令 | outbox 中断、重复、Go 已执行但响应/taskId丢失、节点崩溃、确定拒绝与未知结果 | command/journal/本地操作及现场关联；未知不重放 |
 | AC-STREAM / FI-LEASE 流与文件 | 各类会话、慢消费者、撤销丢失、connector崩溃、Go执行器租约、分片/取消/续传 | 关闭时限、缓冲水位、缺口、摘要和清理 |
-| AC-DOMAIN 业务 | 第 13 节及附录 B 的逐端点、provider、适用 profile | 完整分母、失败、缺口与复测 |
+| AC-DOMAIN 业务 | 按 §13.7 已入选操作及适用环境对照附录 B 源码，逐项核验 Go 执行与业务结果 | 当期分母、失败、缺口与复测，另列排除及条件能力 |
 | AC-LIFE / FI-RESTORE 首版生命周期 | 保留 core 的安装/重启/升级回滚、旧数据/快照恢复、身份轮换退役、跨存储水位不一致 | 节点前后版本、恢复点、任务对账和单写者 |
 | AC-SEC / FI-SEC 安全对抗性验收 | 路径与命令注入、票据伪造/重放、爆破限流、WSS Origin/CSRF、预签名 URL 越权、跨租户引用和日志泄密 | 攻击输入、拒绝结果、限流、审计和脱敏证据 |
 | NET 链路 | 海外/国内浏览器与节点、API/Relay/R2/包源、代理切换 | 分方向可达性、绝对延迟、断开与恢复 |
@@ -591,7 +605,7 @@ P0 在压测前冻结负载文件与摘要：命令/秒及操作比例、突发�
 
 ## 15.3 实施门禁与参数冻结
 
-本节是实施门禁索引，字段、状态和 SQL 实现以附录 A/C 为权威，验收编号以 [`docs/acceptance-ids.json`](acceptance-ids.json) 为唯一注册表，避免同一契约在多处独立演进。它不裁剪第 13 节的完整功能迁移范围，也不引入定价或费用模型；新增参数和状态在 P0 通过真实代码、Cloudflare 配置与实验结果冻结前，均保持 `待 PoC` 或 `PLANNED`。
+本节是实施门禁索引，字段、状态和 SQL 实现以附录 A/C 为权威，验收编号以 [`docs/acceptance-ids.json`](acceptance-ids.json) 为唯一注册表，避免同一契约在多处独立演进。本轮业务验收以 §13.7 的范围处置为准；新增参数和状态在 P0 通过真实代码、Cloudflare 配置与实验结果冻结前，均保持 `待 PoC` 或 `PLANNED`。
 
 ### 15.3.1 R1 命令状态、并发事件与证据裁决
 
@@ -632,9 +646,9 @@ leaseUntil <= min(
 
 ### 15.3.4 R4 节点写入控制与跨入口互斥
 
-首版在节点实际 Go service 变更入口强制 `managementMode ∈ {CLOUD_MANAGED, LOCAL_MAINTENANCE, POLICY_SCHEDULER}` 与持久 `fenceVersion`，而不是只在 connector 或 React 层隐藏入口。覆盖 core API、agent socket、MCP、1pctl、Cron、证书续期、应用同步和维护任务。`POLICY_SCHEDULER` 仅允许已签名且已确认的策略版本、到期时间和资源锁，不允许临时人工参数；`LOCAL_MAINTENANCE` 是本地交互恢复主体，进入后暂停云端新写入。维护进入、超时和离线回切由节点本地 watchdog 根据持久 deadline 执行，恢复联网后再由云端核对 fence 和水位。本机 root 能绕过 fence 属于运维信任边界，应记录为已知限制并通过漂移检测发现，不能宣称由协议防住。
+首版在节点实际 Go service 变更入口强制 `managementMode ∈ {CLOUD_MANAGED, LOCAL_MAINTENANCE, POLICY_SCHEDULER}` 与持久 `fenceVersion`，而不是只在 connector 或 React 层隐藏入口。覆盖 core API、agent socket、1pctl、保留的 Cron 与维护任务。旧站点、商店或 MCP 入口若能修改同一保留资源，核验该入口与本轮写操作之间的隔离。`POLICY_SCHEDULER` 仅允许已签名且已确认的策略版本、到期时间和资源锁，不允许临时人工参数；`LOCAL_MAINTENANCE` 是本地交互恢复主体，进入后暂停云端新写入。维护进入、超时和离线回切由节点本地 watchdog 根据持久 deadline 执行，恢复联网后再由云端核对 fence 和水位。本机 root 能绕过 fence 属于运维信任边界，应记录为已知限制并通过漂移检测发现，不能宣称由协议防住。
 
-命令创建时保存当时的 `fenceVersion`；`beginDispatch` 和本地 Go 入口必须同时核对节点当前 fence，维护期间冻结旧 fence 的新写入，回切后重新授权或进入核对。进入 `LOCAL_MAINTENANCE` 前排空或标记在途任务、提升 fence、记录操作者和原因；维护超时自动回切并重新核对水位。资源锁矩阵至少覆盖：网站配置与证书续期的 nginx 配置锁、数据库恢复与容器更新的 volume 锁、快照恢复与 Cron 备份的节点/数据锁、升级与所有破坏性操作的节点锁。`commandId` 去重只解决同一命令重复，不能替代不同入口对同一资源的互斥。AC-LIFE 增加云端与 Cron、证书与网站配置、恢复与备份三组并发用例。
+命令创建时保存当时的 `fenceVersion`；`beginDispatch` 和本地 Go 入口必须同时核对节点当前 fence，维护期间冻结旧 fence 的新写入，回切后重新授权或进入核对。进入 `LOCAL_MAINTENANCE` 前排空或标记在途任务、提升 fence、记录操作者和原因；维护超时自动回切并重新核对水位。资源锁矩阵覆盖容器配置变更与重启的实例锁、数据库恢复与容器更新的 volume 锁、快照恢复与 Cron 备份的节点/数据锁、升级与所有破坏性操作的节点锁。`commandId` 去重只解决同一命令重复，不能替代不同入口对同一资源的互斥。AC-LIFE 核对云端写入与 Cron、容器配置变更与重启、恢复与备份三组并发用例。
 
 ### 15.3.5 R5–R6 容量实验与 Cloudflare 硬约束
 
@@ -719,7 +733,7 @@ P0 确定下表的发布标准，各实施阶段逐项提供证据，P5 汇总�
 | 端点覆盖 | route registry 生成 endpoint→page→permission→operation→adapter→evidence 清单；破坏性、恢复、升级、文件、终端和配置操作逐项映射 |
 | 安全边界 | SSH host-key pinning、命令参数边界、日志脱敏回归、租户配额、导出/删除和审计保留策略 |
 
-首版不把 Hyperdrive、OTA/Yocto、AI MCP 扩展和 managed-agent 退役列入 P0–P5 验收分母；若后续接入外部 Postgres/MySQL，必须另建 ADR，且不能成为授权、命令或审计的第二权威。
+Hyperdrive、OTA/Yocto、managed-agent 退役以及本轮已排除的网站、应用商店、AI 和 MCP 不列入 P0–P5 的当期交付分母；若后续接入外部 Postgres/MySQL，必须另建 ADR，且不能成为授权、命令或审计的第二权威。
 
 # 附录 A · 协议、数据与可靠性细则
 
@@ -1104,7 +1118,7 @@ R2 对象 key 由服务端生成，包含租户与用途前缀。上传先创建
 
 全量路由迁移矩阵保留 1Panel `dev-v2@cedb8dd` 的核对范围。本轮在 `aaba86d` 复核启动、采样、OpenResty 重启、网站备份创建与恢复，并核对两次提交间相关实现的差异。早期方案将前端复用来源记为 XCtechResource，当前实施以 `AngelFleetConsole main@df715b3` 的实际路由、权限和测试宿主为准。三个仓库的完整提交、工作树状态及变更影响见[研发计划的源码基线](go-agent-development-plan.md)。[1Panel 矩阵基线](https://github.com/1Panel-dev/1Panel/commit/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633) · [1Panel 本轮核对提交](https://github.com/1Panel-dev/1Panel/commit/aaba86d0ef71a31ee319e74998ffe83c64abf4b6)
 
-迁移矩阵覆盖公开源码注册的 9 个 core 路由组与 25 个 agent 路由组，共 34 组，并包含组外入口和后台生命周期。首版交付为 XC React 控制台、Cloudflare 控制面、connector 与保留的 Go core/agent；managed-agent 和 core 退役单独验收。每个保留能力均需完成页面、权限、执行、失败与恢复的真实节点验证。
+源码盘点覆盖 9 个 core 与 25 个 agent 路由组，共 34 组，并保留组外入口及生命周期。§13.7 确定当前选择。混合组仅按纳入的端点实施，排除或只作兼容依赖的行留在本表以便核查。两节点真机验收、单租户容量验收及后续 core 退役分别取证。
 
 矩阵的“现有功能”来自固定提交的入口和选定实现。“云端职责”“节点职责”“迁移验收”属于本方案设计。存在路由或前端菜单只能证明该入口出现在源码中，实际能力还需结合处理器与社区/企业 provider 判断。
 
@@ -1112,7 +1126,7 @@ R2 对象 key 由服务端生成，包含租户与用途前缀。上传先创建
 
 | 分类 | 范围 | 实施边界 |
 |---|---|---|
-| 保留业务实现 | 容器、网站、数据库、文件、备份、主机、Cron、运行环境、KVM 及当前公开 AI 能力 | 继续在原 Go 进程及初始化环境中运行，保留 service、repo、utils 与业务规则 |
+| 保留业务实现 | 主机、容器、数据库、文件、备份及计划任务；KVM 依环境选入 | 保留上游 Go 执行器与数据库归属，依赖记录随业务验证 |
 | 适配调用边界 | DTO、错误封装、节点 ID、任务进度、本地 taskId、文件和实时流 | 由 operation adapter 转换；云端命令与本地任务建立持久映射 |
 | 新增运行能力 | connector、节点身份、WSS、epoch、journal、回执重发、取消和未知结果核对 | 形成可靠节点协议，不把现有 Unix socket 暴露为任意 HTTP 隧道 |
 | 后续 core 解耦 | 共享数据库、配置来源、身份注入、启动、升级和快照 | 首版保留兼容栈；满足 B.8 条件后再退役 core |
@@ -1129,53 +1143,53 @@ core 提供静态前端、统一中间件、`/api/v2/core/*` 控制接口及 `/m
 
 ## B.3. core 全量路由组迁移矩阵
 
-所有路径以下文给出的组前缀拼接 `/api/v2/core`。验收项为计划条件。
+下列上游路径拼接 `/api/v2/core`。表中职责描述用于对照历史设计。排除项只保留源码，云端账号、RBAC 和审计由 AngelFleetConsole 承接。
 
 | 路由组与功能 | 云端职责 | agent / connector 职责 | 关键迁移验收 | 固定源码 |
 |---|---|---|---|---|
 | BaseRouter · auth | 验证码、登录、MFA、passkey、API Key、当前用户、密码过期、会话与租户权限 | 接收经验证的短期操作身份，支持终端撤销 | React 登录和 API 契约正确，用户/节点授权隔离，登出和密钥撤销能影响已建立会话 | [入口](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/core/router/ro_base.go) |
 | BackupRouter · backups | 公共备份账户、OAuth/token、账户版本与授权分配 | 保留存储服务访问和节点备份执行，接收受控凭据或短期授权 | 账户更新/删除传播及节点仍使用账户时的处理 | [入口](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/core/router/ro_backup.go) |
 | LogRouter · logs | 登录审计、操作审计、检索和保留策略 | 执行回执和本地证据上传，持续关联 operation_id | 云端请求、节点执行和结果可关联，清理权限隔离 | [入口](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/core/router/ro_log.go) |
-| SettingRouter · settings | 租户/个人设置、菜单、终端偏好、发布编排、应用商店策略 | 首版保留节点设置与原升级执行，隔离本机管理入口；managed 阶段调整端口、本地 SSL 与 updater | 平台配置与节点配置拆分，升级/证书/代理变更可追踪和恢复 | [入口](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/core/router/ro_setting.go) |
+| SettingRouter · settings | 租户/个人设置、菜单、终端偏好、发布编排；商店策略排除 | 首版保留节点设置与原升级执行，隔离本机管理入口；managed 阶段调整端口、本地 SSL 与 updater | 平台配置与节点配置拆分，升级/证书/代理变更可追踪和恢复 | [入口](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/core/router/ro_setting.go) |
 | CommandRouter · commands | 命令模板、分组、导入导出与共享权限 | 按已授权操作执行选定命令并记录输出，导出文件改为响应流或对象存储 | 模板归属和参数验证，导入幂等，导出不依赖core本地路径 | [入口](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/core/router/command.go) |
 | GroupRouter · groups | 租户范围的全局资源分组与成员关系 | 保留必要的节点本地资源分组映射 | 全局组ID与节点资源ID区别处理，删除依赖检查 | [入口](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/core/router/ro_group.go) |
 | ScriptRouter · script | 脚本目录、内容版本、同步计划、执行授权 | 缓存已授权脚本，执行与本地定时任务引用，确认版本和摘要 | 首版验证脚本版本与执行关联；core 退役前移除共享 core.db 读取，离线执行使用已确认版本 | [入口](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/core/router/ro_script_library.go) |
 | RuntimeDiagnosticsRouter · hosts/diagnostics | 新控制面运行指标、trace、请求/连接诊断 | core 存续期间保留 core 与 agent 的 Go profile、goroutine 诊断，受限导出 | 界面区分云端与节点诊断，访问与保留控制 | [入口](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/core/router/ro_runtime_diagnostics.go) |
-| PanelMCPRouter · mcp | 凭据、节点授权、目录投影、admission、调用审计和控制配置 | runtime安装与状态、Docker进程和网站绑定执行 | 云端身份与节点目标绑定，调用去重和结果确认，跨版本能力协商 | [入口](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/core/router/ro_mcp.go) |
+| PanelMCPRouter · mcp（本轮排除） | 凭据、节点授权、目录投影、admission、调用审计和控制配置 | runtime安装与状态、Docker进程和网站绑定执行 | 云端身份与节点目标绑定，调用去重和结果确认，跨版本能力协商 | [入口](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/core/router/ro_mcp.go) |
 
 ## B.4. agent 全量路由组迁移矩阵
 
-以下 25 组继续使用节点 Go 业务实现和本地资源事实。XC React 重建业务页面，云端增加租户/节点授权、请求编排、审计与必要索引。对已有 Go 异步操作，持久保存 `cloudCommandId ↔ nodeId ↔ localTaskId`；返回 taskId 只表示任务已建立，最终状态来自节点任务与执行证据。普通本地资源 ID 必须与 nodeId 组合使用。
+以下 25 组记录上游路由与原候选改造，§13.7 决定本轮纳入的端点。保留操作复用本机 Go；云端按租户和节点授权，对异步操作维护 `cloudCommandId ↔ nodeId ↔ localTaskId` 并查询最终状态。表中排除或依赖项的上游行为仅用于核对来源。
 
 | 路由组与功能 | 云端职责 | 节点职责及适配 | 关键迁移验收 | 固定源码 |
 |---|---|---|---|---|
-| VMRouter · vms | VM/ISO/模板/网络/存储索引、配额与操作授权 | 复用VM环境检测、创建/启停、磁盘、快照、ISO、虚拟网络与console桥 | 创建去重，磁盘/快照失败恢复，console续租与断线重附着，硬件能力呈现 | [入口](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/agent/router/ro_vm.go) |
-| DashboardRouter · dashboard | 节点列表、汇总状态、视图偏好和权限 | 保留OS/资源/Top进程采集、启动器、系统重启执行 | 节点离线与旧指标显式标注，重启受控并产生恢复确认 | [入口](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/agent/router/ro_dashboard.go) |
+| VMRouter · vms（条件项） | VM/ISO/模板/网络/存储索引、配额与操作授权 | 复用VM环境检测、创建/启停、磁盘、快照、ISO、虚拟网络与console桥 | 创建去重，磁盘/快照失败恢复，console续租与断线重附着，硬件能力呈现 | [入口](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/agent/router/ro_vm.go) |
+| DashboardRouter · dashboard | 节点列表、汇总状态、视图偏好和权限 | 保留 OS、资源和 Top 进程采集与受控重启；应用启动器退出 | 节点离线与旧指标显式标注，重启受控并产生恢复确认 | [入口](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/agent/router/ro_dashboard.go) |
 | HostRouter · hosts | 主机档案、终端授权、监控查询、风险操作审计 | 保留SSH、PTY、firewall、监控、磁盘分区/挂载、supervisor与内部终端能力 | 所有流有node_id绑定，防火墙变更可回退，终端续租/撤销可靠 | [入口](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/agent/router/ro_host.go) |
 | ContainerRouter · containers | 容器/镜像/仓库/compose/网络/卷的授权与任务编排 | 复用Docker调用、compose、日志流、容器文件、daemon配置和镜像任务 | 重试不会重复创建，流背压和取消，大镜像与文件走节点数据通道 | [入口](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/agent/router/ro_container.go) |
 | LogRouter · logs | 日志查询入口、任务索引与长期对象归档 | 系统日志、service列表、task.db和日志文件分页读取 | 游标稳定，断线续读，日志权限与限速 | [入口](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/agent/router/ro_log.go) |
-| FileRouter · files | 路径操作授权、传输票据、分享入口和审计 | 复用文件树、内容编辑、压缩、下载、权限、回收站、历史、AI搜索和分享验证 | 分片续传、摘要校验、路径边界、取消清理、分享票据租户隔离 | [入口](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/agent/router/ro_file.go) |
+| FileRouter · files | 路径操作授权、传输票据、分享入口和审计 | 复用文件树、内容编辑、压缩、下载、权限、回收站、历史和分享验证，排除 AI 搜索 | 分片续传、摘要校验、路径边界、取消清理、分享票据租户隔离 | [入口](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/agent/router/ro_file.go) |
 | ToolboxRouter · toolbox | 系统工具操作策略、调度和审计 | 保留主机参数/密码/swap/DNS、清理、fail2ban、FTP及公开扫描入口，逐项核验provider能力 | 重启或失联恢复，清理范围确认，企业stub能力明确标记 | [入口](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/agent/router/ro_toolbox.go) |
 | CronjobRouter · cronjobs | 计划模板与下发、跨节点汇总、作业授权 | 保留本地调度、备份/脚本执行与运行记录，接收版本化配置 | 断网仍按已确认策略执行，更新与重试不重复调度 | [入口](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/agent/router/ro_cronjob.go) |
 | BackupRouter · backups | 账户与记录索引、任务编排、R2或其他目标的授权 | 复用桶检查、备份、恢复、上传、记录下载删除和存储适配 | 全量上传恢复演练、摘要验证、断线恢复、账户变更协调 | [入口](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/agent/router/backup.go) |
-| SettingRouter · settings | 租户/节点设置的版本与下发、快照/恢复策略 | 首版保留 agent 设置、SSH/AI 配置、文件历史和旧快照执行；managed 阶段拆除 core 依赖 | 配置版本与离线缓存；首版旧栈恢复成立，managed 阶段完成旧快照转换 | [入口](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/agent/router/ro_setting.go) |
-| AppRouter · apps | 应用目录视图、安装授权、发布编排与状态汇总 | 保留应用源同步、安装/升级/卸载、端口、配置与依赖判断 | 安装任务幂等，升级回滚和依赖检查，失联后状态对账 | [入口](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/agent/router/ro_app.go) |
-| WebsiteRouter · websites | 网站资源索引、域名/证书关联、操作授权 | 保留建站、反代、重写、HTTPS、CORS、认证、目录权限、缓存和nginx配置 | 配置校验后生效、失败回滚、域名与节点权限正确关联 | [入口](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/agent/router/ro_website.go) |
-| WebsiteDnsAccountRouter · websites/dns | DNS账户授权、密钥托管选择和发放审计 | 保留DNS provider适配及节点所需短期凭据缓存 | 账户隔离，密钥轮换，ACME任务读取一致版本 | [入口](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/agent/router/ro_website_dns_account.go) |
-| WebsiteAcmeAccountRouter · websites/acme | ACME账户归属、授权和续期政策 | 保留ACME签发交互与节点挑战执行 | 签发/续期重试和冲突处理，私钥生命周期明确 | [入口](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/agent/router/ro_website_acme_account.go) |
-| WebsiteSSLRouter · websites/ssl | 证书库存、分发授权、到期策略 | 保留证书获取/导入/部署，替换原master同步依赖 | 跨节点分发新实现，证书应用确认、回滚和到期监控 | [入口](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/agent/router/ro_website_ssl.go) |
-| WebsiteTemplateRouter · websites/templates | 模板版本、租户授权与发布索引 | 保留导入、预览、渲染输出与节点文件生成 | 模板包校验，输出路径限制，上传传输可恢复 | [入口](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/agent/router/ro_website_template.go) |
+| SettingRouter · settings | 租户/节点设置的版本与下发、快照/恢复策略 | 首版保留 agent 设置、SSH 配置（AI 配置排除）、文件历史和旧快照执行；managed 阶段拆除 core 依赖 | 配置版本与离线缓存；首版旧栈恢复成立，managed 阶段完成旧快照转换 | [入口](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/agent/router/ro_setting.go) |
+| AppRouter · apps（产品入口排除；既有依赖按需兼容） | 应用目录视图、安装授权、发布编排与状态汇总 | 保留应用源同步、安装/升级/卸载、端口、配置与依赖判断 | 安装任务幂等，升级回滚和依赖检查，失联后状态对账 | [入口](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/agent/router/ro_app.go) |
+| WebsiteRouter · websites（本轮排除） | 网站资源索引、域名/证书关联、操作授权 | 保留建站、反代、重写、HTTPS、CORS、认证、目录权限、缓存和nginx配置 | 配置校验后生效、失败回滚、域名与节点权限正确关联 | [入口](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/agent/router/ro_website.go) |
+| WebsiteDnsAccountRouter · websites/dns（本轮排除） | DNS账户授权、密钥托管选择和发放审计 | 保留DNS provider适配及节点所需短期凭据缓存 | 账户隔离，密钥轮换，ACME任务读取一致版本 | [入口](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/agent/router/ro_website_dns_account.go) |
+| WebsiteAcmeAccountRouter · websites/acme（本轮排除） | ACME账户归属、授权和续期政策 | 保留ACME签发交互与节点挑战执行 | 签发/续期重试和冲突处理，私钥生命周期明确 | [入口](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/agent/router/ro_website_acme_account.go) |
+| WebsiteSSLRouter · websites/ssl（本轮排除） | 证书库存、分发授权、到期策略 | 保留证书获取/导入/部署，替换原master同步依赖 | 跨节点分发新实现，证书应用确认、回滚和到期监控 | [入口](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/agent/router/ro_website_ssl.go) |
+| WebsiteTemplateRouter · websites/templates（本轮排除） | 模板版本、租户授权与发布索引 | 保留导入、预览、渲染输出与节点文件生成 | 模板包校验，输出路径限制，上传传输可恢复 | [入口](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/agent/router/ro_website_template.go) |
 | DatabaseRouter · databases | 数据库资源索引、凭据权限、变更和备份任务编排 | 保留MySQL/PostgreSQL/MongoDB/Redis服务访问、配置、用户与权限管理 | 变更结果验证、凭据轮换、长任务状态，数据库大备份绕开交互API | [入口](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/agent/router/ro_database.go) |
-| NginxRouter · openresty | 配置版本、操作权限、编译任务索引 | 保留OpenResty配置、状态、模块编译、默认HTTPS操作 | 配置测试、原子生效与回滚，编译任务断线不丢失 | [入口](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/agent/router/ro_nginx.go) |
-| RuntimeRouter · runtimes | 运行环境目录、操作授权和状态汇总 | 保留语言runtime、Node包、PHP扩展/FPM、supervisor与配置执行 | 安装过程可恢复，配置与资源依赖验证 | [入口](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/agent/router/ro_runtime.go) |
+| NginxRouter · openresty（本轮排除） | 配置版本、操作权限、编译任务索引 | 保留OpenResty配置、状态、模块编译、默认HTTPS操作 | 配置测试、原子生效与回滚，编译任务断线不丢失 | [入口](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/agent/router/ro_nginx.go) |
+| RuntimeRouter · runtimes（产品入口排除；既有依赖按需兼容） | 运行环境目录、操作授权和状态汇总 | 保留语言runtime、Node包、PHP扩展/FPM、supervisor与配置执行 | 安装过程可恢复，配置与资源依赖验证 | [入口](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/agent/router/ro_runtime.go) |
 | ProcessRouter · process | 进程信息授权和实时订阅入口 | 保留进程列表流、终止、端口监听与PID详情 | 订阅背压、重连、进程实例识别与终止权限 | [入口](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/agent/router/ro_process.go) |
-| WebsiteCARouter · websites/ca | CA归属、签发政策和分发审计 | 保留CA导入、签发、续期和节点部署，私钥存放单独设计 | 私钥授权、证书链校验、轮换和撤销流程 | [入口](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/agent/router/ro_website_ca.go) |
-| AIToolsRouter · ai | AI账户与节点资源视图、授权、任务索引 | 保留当前公开 Ollama、GPU 分组与监控、vLLM、AI MCP、AI agents/插件/skills/渠道实现，按最新 DTO 适配 | AI 进程与渠道凭据隔离，长任务可恢复；模型准备及私有能力按 provider 单列 | [入口](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/agent/router/ro_ai.go) |
+| WebsiteCARouter · websites/ca（本轮排除） | CA归属、签发政策和分发审计 | 保留CA导入、签发、续期和节点部署，私钥存放单独设计 | 私钥授权、证书链校验、轮换和撤销流程 | [入口](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/agent/router/ro_website_ca.go) |
+| AIToolsRouter · ai（本轮排除） | AI账户与节点资源视图、授权、任务索引 | 保留当前公开 Ollama、GPU 分组与监控、vLLM、AI MCP、AI agents/插件/skills/渠道实现，按最新 DTO 适配 | AI 进程与渠道凭据隔离，长任务可恢复；模型准备及私有能力按 provider 单列 | [入口](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/agent/router/ro_ai.go) |
 | GroupRouter · groups | 租户与节点资源组映射和权限 | 保留本地分组CRUD，显式映射云端组 | 同名组与本地ID不跨租户混用 | [入口](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/agent/router/ro_group.go) |
 | AlertRouter · alert | 跨节点规则/事件汇总、分发策略与通知审计 | 保留本地条件评估、配置与日志，适配云端上报/可用通知provider | 去重与恢复事件、离线积压补报、各通知渠道能力核验 | [入口](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/agent/router/ro_alert.go) |
 | RuntimeDiagnosticsRouter · hosts/diagnostics | 受控诊断入口、trace关联和文件索引 | 保留agent summary、goroutines与profile采集 | 受限采集和导出，敏感诊断内容访问控制 | [入口](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/agent/router/ro_runtime_diagnostics.go) |
 
-当前公开路由注册已删除 `ModelDownloaderRouter`，模型准备迁入 XPack；不能继续将旧 `ai/model/downloader` 与 `xpack/model/downloader` 兼容路由列为当前可直接复用能力。模型准备若在产品范围内，需明确可用授权实现或自研工作包。AI agents、AI MCP 服务管理与 Panel MCP 分别建立页面、执行协议和验收记录。[当前 agent 路由](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/agent/router/common.go)、[当前 AI 路由](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/agent/router/ro_ai.go)、[Panel MCP 路由](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/core/router/ro_mcp.go)。
+当前公开路由注册已删除 `ModelDownloaderRouter`，模型准备迁入 XPack；不能继续将旧 `ai/model/downloader` 与 `xpack/model/downloader` 兼容路由列为当前可直接复用能力。模型准备若在产品范围内，需明确可用授权实现或自研工作包。AI、GPU 监控与两类 MCP 均排除；这些源码记录不产生本轮页面或验收任务。[当前 agent 路由](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/agent/router/common.go)、[当前 AI 路由](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/agent/router/ro_ai.go)、[Panel MCP 路由](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/core/router/ro_mcp.go)。
 
 ## B.5. 组外入口与跨层硬依赖
 
@@ -1183,15 +1197,15 @@ core 提供静态前端、统一中间件、`/api/v2/core/*` 控制接口及 `/m
 
 - 原静态前端、安全入口、favicon/assets、动态主题图片和静态 JSON 由 core 提供。XC React 发布接管产品界面；主题、登录入口和静态资源分别迁移，未知节点深链接无需重新构建也能打开和刷新。core 存续期的本地入口仅承担受控兼容或恢复职责。[原静态入口](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/core/init/router/router.go)。
 
-- `/mcp` 入口接受多种HTTP方法，先做MCP认证并签发access proof，再转发本机runtime。新方案需在云端MCP入口和节点runtime之间保留授权与来源绑定。[core/init/router/mcp.go](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/core/init/router/mcp.go)
+- `/mcp` 入口接受多种HTTP方法，先做MCP认证并签发access proof，再转发本机runtime。本轮不发布云端 MCP 入口。[core/init/router/mcp.go](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/core/init/router/mcp.go)
 
-- agent的 `/internal/mcp/docker` 与 `/internal/mcp/website` 限定 master 模式及 Unix transport，另有独立capabilities入口。connector需把内部控制命令映射到显式允许的通道，保留这些接口的访问边界。[agent MCP runtime 入口](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/agent/init/router/mcp_runtime.go)
+- agent的 `/internal/mcp/docker` 与 `/internal/mcp/website` 限定 master 模式及 Unix transport，另有独立capabilities入口。本轮不从 connector 暴露这些 MCP 接口。[agent MCP runtime 入口](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/agent/init/router/mcp_runtime.go)
 
 - agent另注册 `/api/v2/health/check` 和内部终端capabilities/revoke。健康检查、能力探测、撤销命令属于节点控制协议。[agent/init/router/router.go](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/agent/init/router/router.go) [agent/router/ro_host.go](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/agent/router/ro_host.go)
 
 - 文件分享包含匿名 `info/check/download` 入口，需要保留密码、过期、对象范围与撤销规则。local/SSH/container 终端、进程 WS、VM console 与脚本运行流使用各自适配器，不能仅迁移普通 JSON 路由。[文件分享](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/agent/router/ro_file.go)、[终端](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/agent/router/ro_host.go)、[进程流](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/agent/router/ro_process.go)、[VM console](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/agent/router/ro_vm.go)。
 
-- 安装器、systemd、1pctl、本地 Cron、证书自动续期、告警、应用商店同步、日志与临时文件清理、升级回滚及快照恢复均列入生命周期验收。云端配置与节点调度明确单一执行者，离线运行和恢复补报分别验证。
+- 安装器、systemd、1pctl、本轮 Cron、告警、运维清理、升级回滚和系统快照恢复纳入节点生命周期验收。排除站点续证和商店同步的云端管理。离线策略与恢复补报分开验证。
 
 ### B.5.2 数据所有权与共享数据库
 
@@ -1203,11 +1217,11 @@ core 提供静态前端、统一中间件、`/api/v2/core/*` 控制接口及 `/m
 | agent.db | 节点资源事实，core 读取部分设置、CA 和 SSL 等数据 | 节点保持事实权威，云端通过查询与事件建立索引 |
 | task.db | core 与 agent 共享本地任务 | 保留 Go 任务，云端 commandId 与 localTaskId 持久关联；journal 补执行恢复语义 |
 | alert.db | 两进程使用告警相关状态 | 节点保留检测与执行记录，云端维护策略版本和事件汇总，明确去重键 |
-| monitor.db 与 gpu_monitor.db | 节点监控历史 | 保留本地采样与查询，云端按功能保存摘要或归档 |
+| monitor.db 与 gpu_monitor.db | 节点监控历史 | 采用前者的主机监控数据；GPU 历史不迁入云端，可在原机保留 |
 
 数据库初始化与共享读取依据如下。[core/init/db/db.go](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/core/init/db/db.go) [agent/init/db/db.go](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/agent/init/db/db.go) [core/app/repo/agent.go](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/core/app/repo/agent.go)
 
-脚本、证书关联、防火墙端口与部分告警配置依赖 core.db。首版保留本机兼容访问并限定配置写入主体；core 退役阶段统一迁入版本化投影，携带摘要、应用结果和回退所需旧值。防火墙 ServerPort 与网站 SSL/SSLID 必须重新定义业务含义，不能仅删除查询或填空值。[脚本](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/agent/app/repo/script.go)、[网站证书](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/agent/app/service/website_utils.go)、[防火墙端口](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/agent/app/service/firewall_utils.go)、[告警依赖](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/agent/app/service/alert_helper.go)。
+脚本、证书关联、防火墙端口与部分告警配置依赖 core.db。首版保留本机兼容访问并限定配置写入主体；core 退役阶段统一迁入版本化投影，携带摘要、应用结果和回退所需旧值。按保留的面板/节点端口核对防火墙 ServerPort；网站 SSL/SSLID 作为既有本机引用保留于兼容数据。[脚本](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/agent/app/repo/script.go)、[网站证书](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/agent/app/service/website_utils.go)、[防火墙端口](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/agent/app/service/firewall_utils.go)、[告警依赖](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/agent/app/service/alert_helper.go)。
 
 ### B.5.3 身份、授权与终端
 
@@ -1229,13 +1243,13 @@ core 当前负责更新 core、agent、1pctl 和本机安装变量。首版可�
 
 ### B.5.6 MCP 拆分
 
-Panel MCP的凭据、admission、节点授权和审计保留在控制面。runtime安装、Docker操作、主机网站绑定及本地桥接进入节点侧。当前 `mcp_execute.go` 调用 `mcpapi.Dispatch`，后者用core进程内handler执行请求，因此迁移需替换为显式节点协议。runtime设置又直接访问core DB，需要与运行态分离。[core/app/service/mcp_execute.go](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/core/app/service/mcp_execute.go) [core/utils/mcpapi/dispatch.go](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/core/utils/mcpapi/dispatch.go) [core/app/service/mcp_runtime.go](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/core/app/service/mcp_runtime.go)
+本轮不提供 MCP 入口。既有 Panel MCP 依赖 core 进程内分发与本机 runtime，保留下列源码用于历史追溯。[core/app/service/mcp_execute.go](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/core/app/service/mcp_execute.go) [core/utils/mcpapi/dispatch.go](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/core/utils/mcpapi/dispatch.go) [core/app/service/mcp_runtime.go](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/core/app/service/mcp_runtime.go)
 
-agent 已有 Docker controller、网站 binding 和 capabilities 探测等 MCP 执行基础。先复用这些能力，core 存续期间由受控本机适配承接剩余执行；退役前将残留节点逻辑迁入 agent，并将凭据、准入、节点授权和审计留在云端。源码按职责追踪，不使用旧 MCP 行数作为迁移完成标准。[agent MCP 入口](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/agent/init/router/mcp_runtime.go)、[core 授权适配](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/core/utils/xpack/helper/auth_helper.go)、[core 启动](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/core/server/server.go)。
+上游还有 Docker controller、网站绑定与能力探测等内部 MCP 路径，本轮直接适配选入的容器、数据库和主机业务入口。[agent MCP 入口](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/agent/init/router/mcp_runtime.go)、[core 授权适配](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/core/utils/xpack/helper/auth_helper.go)、[core 启动](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/core/server/server.go)。
 
 ## B.6. XC React 前端复用与接口契约
 
-上线界面采用 AngelFleetConsole 的应用壳、导航、主题、账号机构权限页面、React Query、Zustand 和 API 客户端。容器、网站、数据库和终端页面按 1Panel Vue 的流程及 Go DTO 在 Console 中实现。
+上线界面采用 AngelFleetConsole 的应用壳、导航、主题、账号机构权限页面、React Query、Zustand 和 API 客户端。容器、数据库、文件和终端页面按 1Panel Vue 的流程及 Go DTO 在 Console 中实现。
 
 | 契约 | 现有输入 | XC React 迁移要求 |
 |---|---|---|
@@ -1269,7 +1283,7 @@ agent 已有 Docker controller、网站 binding 和 capabilities 探测等 MCP �
 
 ## B.8. 后续 core 退役的源码侧验收条件
 
-保留 core/agent 的完整功能版本按正文阶段验收交付；以下条件用于最终 core 退役阶段，不作为首版替换 XC 前端的前置条件。
+保留 core/agent 的本轮业务按正文阶段验收交付；以下条件用于最终 core 退役阶段，不作为首版替换 XC 前端的前置条件。
 
 1. 9 个 core 路由组与 25 个 agent 路由组，以及组外入口和后台生命周期均有明确处置记录；每个保留功能完成 XC React 页面、云端接口和真实节点执行验证。
 
@@ -1279,13 +1293,13 @@ agent 已有 Docker controller、网站 binding 和 capabilities 探测等 MCP �
 
 4. 执行任务以持久operation_id/task_id对账，断线、重复投递和云端重启后仍能恢复结果，未知结果进入待确认状态。
 
-5. 终端、进程流、日志、VM console等实时功能完成重连、背压、租约与撤销测试。跨境延迟以目标用户实际链路测量。
+5. 终端、进程流、日志、已选的 VM console 等实时功能完成重连、背压、租约与撤销测试。跨境延迟以目标用户实际链路测量。
 
 6. 所有大文件路径覆盖分片、取消、恢复、校验与临时文件清理，浏览器上传、节点拉取、备份和恢复均完成闭环。
 
 7. core和agent共享数据依赖通过API、版本化配置与事件替代，数据库迁移过程有备份、校验、切换点和回退计划。
 
-8. MCP入口、节点执行、凭据、admission、审计与安装恢复完成端到端验证，AI MCP管理和Panel MCP分别验收。
+8. 退役前从运行依赖中清除已排除的 MCP 入口和凭据引用，确认已保留的容器与主机操作可经独立适配器运行。
 
 9. 社区可复用功能、企业缺失能力与新增SaaS能力分别列入交付清单。新增租户/RBAC/连接管理的完成状态独立追踪。
 
@@ -1502,7 +1516,7 @@ CREATE INDEX outbox_ready
 | disk.format | disk.destructive，受限Admin | 目标设备稳定标识、签名操作意图、二次业务确认 | 不自动重放，断电后核对真实设备与文件系统证据 |
 | terminal.open | terminal.open，Operator | 终端角色票据、节点能力、租约和每节点终端配额 | 关闭会话或租约到期；未知 stdin 不自动重放 |
 
-表中的权限、能力名称和确认规则为拟实施产品协议。真实映射依据附录 B 的 Go 处理器逐项建立，不能用一个通用任意命令代理替代全部业务约束。 每条记录同时指定稳定的 localTaskId 或 operationMarker 接入方式、实际执行前检查位置和结果核对入口。候选系统 OTA 的 operation 仅在附录 E 的适用设备与发布范围冻结后启用，不能通过通用 shell 绕过升级排他与未知结果处理。
+表中的操作标识是拟实施协议登记。本轮只接入 §13.7 的适用目标；service.restart 与 backup.restore 的旧 OpenResty、网站示例不再派工，通用操作仍须取得各自目标的实现和实测证据。真实映射依据附录 B 的 Go 处理器逐项建立，不能用一个通用任意命令代理替代全部业务约束。 每条记录同时指定稳定的 localTaskId 或 operationMarker 接入方式、实际执行前检查位置和结果核对入口。候选系统 OTA 的 operation 仅在附录 E 的适用设备与发布范围冻结后启用，不能通过通用 shell 绕过升级排他与未知结果处理。
 
 ## C.3 统一错误与可观测字段
 
@@ -1547,7 +1561,7 @@ traceId 贯穿 React 请求、控制 API、TenantData、Queue、DO、connector �
 
 ## D.3 聚合需求与迁移追踪
 
-REQ 是产品追踪编号，不替代附录 B 的路由组和逐端点台账。每条需求关联页面、API、operation、适用环境、验收编号及证据；不能仅凭菜单或页面出现标记完成。
+REQ 与验收 ID 保留跨版本追踪；是否列入当期交付和分母，以 §13.7 和本表的适用条件为准。每条需求关联页面、API、operation、适用环境、验收编号及证据；不能仅凭菜单或页面出现标记完成。
 
 验收记录区分设计、实现未验证、验证通过与正式接受；每次结论标注源码版本、环境和证据。首版至少覆盖两租户两节点的真实业务纵切，模拟器结果与真实节点结果分别记录，范围缺口不得自动解释为已完成。
 
@@ -1559,9 +1573,9 @@ REQ 是产品追踪编号，不替代附录 B 的路由组和逐端点台账。�
 | REQ04 终端与实时流 | 主机、SSH、容器 exec、日志及 console 按能力开放；租约与断线行为可验证 | §9、B.5.3 / P3–P4 | AC-TERM、AC-STREAM、FI-TERM、FI-LEASE、CAP-02、NET-TERM |
 | REQ05 文件与资源传输 | 文件操作、分片传输、分享和备份制品可校验、取消及清理 | §11、§13.2、B.4 / P3–P4 | AC-FILE、FI-FILE、CAP-02、NET-R2 |
 | REQ06 主机可观测与工具 | 概览、监控、日志、进程、防火墙和系统工具保留适用能力 | §13.2、B.4 / P2、P4 | AC-HOST、FI-HOST、CAP-01、NET-AGENT |
-| REQ07 应用与运行资源 | 容器、应用、网站、运行环境和数据库真实完成操作及失败恢复 | §13.2、B.4 / P4 | AC-APP、AC-DOMAIN、FI-APP、CAP-01、NET-AGENT |
-| REQ08 计划与配置 | 脚本、常用命令、计划、证书和告警有配置版本与应用回执；离线策略明确 | §13.4、B.3–B.4 / P3–P4 | AC-LIFE、FI-CONFIG、CAP-04、NET-POLICY |
-| REQ09 VM、AI 与 MCP | 按公开 provider 与实际硬件验收；私有缺口显式处置，MCP 不绕过授权 | §13.2、B.5.6–B.7 / P4 | AC-MCP、FI-AUTH、CAP-01、NET-MCP |
+| REQ07 应用与运行资源 | 对纳入的容器、数据库及其已存在运行依赖验证操作、失败与恢复 | §13.2、B.4 / P4 | AC-APP、AC-DOMAIN、FI-APP、CAP-01、NET-AGENT |
+| REQ08 计划与配置 | 脚本、常用命令、计划和告警有配置版本与应用回执；离线策略明确 | §13.4、B.3–B.4 / P3–P4 | AC-LIFE、FI-CONFIG、CAP-04、NET-POLICY |
+| REQ09 VM、AI 与 MCP | VM 按 KVM 能力及配额选入；AI、GPU、两类 MCP 排除，保留原编号追溯 | §13.2、B.5.6–B.7 / P4 | FI-AUTH、CAP-01（已选 VM）；AC-MCP、NET-MCP（历史，不计本轮） |
 | REQ10 安装与恢复 | 保留 core 的安装、升级、回滚、快照、数据迁移和退役闭环 | §12、B.5.5 / P5 | AC-RECOVERY、FI-RECOVERY、FI-RESTORE、CAP-04、NET-R2 |
 | REQ11 容量与恢复余量 | 单租户 10,000 节点、D1/DO/Queue 水位、归档和恢复余量分别有实测门禁 | §15.1、§15.3.5 / P0–P5 | AC-CAP、FI-CAP、CAP-01、CAP-02、CAP-03、CAP-04、NET-CAP |
 | REQ12 链路可达性与延迟 | API、Relay、R2、包源及国内/海外路径按可达性、延迟和失败切换验收 | §9、§15.3.7 / P0–P4 | AC-NET、FI-NET、CAP-02、NET-01、NET-02、NET-03、NET-04 |
@@ -1587,7 +1601,7 @@ REQ 是产品追踪编号，不替代附录 B 的路由组和逐端点台账。�
 
 ## D.5 能力配置与范围处置
 
-full-server 是首版配置，在冻结的 Linux 发行版、架构和运行环境上逐项验证。yocto-managed 属候选扩展，只有确认硬件、镜像、持久分区和运行依赖后才纳入交付。能力使用 SUPPORTED、UNSUPPORTED、NOT_INSTALLED、PROBE_FAILED、UNVERIFIED 分别呈现，并携带 capabilityVersion、reason、sampledAt 和 evidence；超时或权限错误不能被解释为 UNSUPPORTED，也不能据此从验收分母删除功能。
+full-server 代表首版普通 Linux 节点，按 §13.7 纳入的能力及已冻结的发行版、架构和运行环境逐项验证。yocto-managed 属候选扩展，只有确认硬件、镜像、持久分区和运行依赖后才纳入交付。能力使用 SUPPORTED、UNSUPPORTED、NOT_INSTALLED、PROBE_FAILED、UNVERIFIED 分别呈现，并携带 capabilityVersion、reason、sampledAt 和 evidence；超时或权限错误不能被解释为 UNSUPPORTED，也不能据此从验收分母删除功能。
 
 适用功能缺失计为待完成；硬件不支持须有证据与清晰提示；私有 provider 缺失记录替代或范围决定。普通服务器功能不能因某类设备不支持而全局隐藏。不默认增加人工审批、跨租户设备转移、批量资产导入和商业配额需求；后续新增须单列产品范围与验收。
 

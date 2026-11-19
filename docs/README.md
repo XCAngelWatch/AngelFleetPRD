@@ -4,8 +4,8 @@
 
 | 目录 | 问题 | 维护位置 |
 |---|---|---|
-| 范围与排期 | 首版交付什么，哪些能力另立版本？ | [主方案](technical-plan.md)维护产品与架构决策、P0–P6 整版路线、协议通则和发布门禁。附录 B 记录全量迁移范围，C.2 登记已确定的操作。 |
-| 范围与排期 | 谁接单，能否并行，完成如何判断？ | [Go Agent 研发计划](go-agent-development-plan.md)维护 M1–M4、GA-01 至 GA-19、依赖与人日估算。 |
+| 范围与排期 | 首版交付什么，哪些能力另立版本？ | [主方案](technical-plan.md)维护产品与架构决策、P0–P6 整版路线、协议通则和发布门禁。[§13.7](technical-plan.md#137-本轮非-ai-功能迁移清单)定义本轮范围，附录 B 保存上游路由审计，C.2 登记操作。 |
+| 范围与排期 | 谁接单，能否并行，完成如何判断？ | [Go Agent 研发计划](go-agent-development-plan.md)维护 M1 派工、GA-11 的共用写能力及原 GA-12 至 GA-19 的退出记录。 |
 | 实现设计 | 控制台、云端和本机如何调用，在哪一步落盘？ | [技术详细设计](technical-design.md)维护跨组件调用顺序和故障恢复边界。 |
 | 实现设计 | Go 与控制面交换什么，代码放在哪里？ | [GA-01 节点契约](go-agent-interface-contract.md)维护下游仓、模块、注册到首次采样的线协议；注册与首采见[GA-01 样例](examples/go-agent-first-sample.json)，两次采样后从空缓存恢复概览见[逐指标读取样例](examples/node-metric-read.v1.json)。 |
 | 操作与验收 | 某一操作复用哪段 1Panel 源码，要补哪些本地能力？ | [Go 操作台账](operation-ledger.md)维护登记操作的适配和核验入口，以及带版本的源码证据。 |

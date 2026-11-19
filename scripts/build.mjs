@@ -118,9 +118,9 @@ const documents = await Promise.all([
   readDocument('technical-plan.md', 'index.html', '技术方案', '1Panel v2 Cloudflare 控制面技术方案，涵盖 XC React、Go 功能迁移、节点协议与单租户 1 万节点验收基线。'),
   readDocument('technical-design.md', 'technical-design.html', '技术详细设计', '对照 1Panel 前端、core 与 agent 的源码入口，说明节点采样、命令执行与结果对账的实现边界，附注册、终端、制品与故障恢复验收场景。'),
   readDocument('go-agent-interface-contract.md', 'go-agent-interface-contract.html', '节点契约', 'GA-01 确定 Go Agent 的源码仓库与模块目录，并给出节点注册、建立连接及首次可信采样的 HTTP 与 WSS 联调示例。'),
-  readDocument('go-agent-development-plan.md', 'go-agent-development-plan.html', '研发计划', 'Go Agent 接入的阶段目标、负责人、依赖、工作量和验收条件，覆盖 GA-01 至 GA-19。'),
+  readDocument('go-agent-development-plan.md', 'go-agent-development-plan.html', '研发计划', 'Go Agent 首次可信采样的派工和验收、通用写能力及原 GA-12 至 GA-19 的范围调整。'),
   readDocument('operation-ledger.md', 'operation-ledger.html', 'Go 操作台账', '查阅节点操作对应的 1Panel 源码、适配范围、互斥与结果核验方式。'),
-  readDocument('spaces/implementation-review.md', 'implementation-review.html', '联调验收记录', '按工作包核对节点注册与采样、OpenResty 重启、网站备份及恢复的真机联调场景与实测记录。')
+  readDocument('spaces/implementation-review.md', 'implementation-review.html', '联调验收记录', '核对节点注册与逐指标采样的真机证据，区分当前联调工作和已移出的历史用例。')
 ]);
 const [plan, design, contract, development, ledger, review] = documents;
 const navigationGroups = [

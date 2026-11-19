@@ -1,8 +1,10 @@
 # 技术详细设计
 
-以一次 OpenResty 重启为例，从服务详情页跟到租户收据、节点 journal、Go 执行和结果对账。当前 AngelFleetConsole 已有身份与审计，1Panel 已有本机执行入口。两端之间的注册、控制连接与命令链路待实施。开发首次节点接入直接查 GA-01 的接口和消息，复核代码位置查操作台账。[GA-01 联调契约](go-agent-interface-contract.md) · [Go 操作台账](operation-ledger.md)
+本轮节点接入、采样和逐指标读取见 §5、§7.2。§1–4 的 OpenResty 示例以及 §7.3–7.4 的安装实例、网站备份示例保留历史设计，用于说明命令落盘、授权、取消和结果对账；这些业务目标已移出本轮派工与验收。当前共用写命令保留，独立容器及数据库候选须重新核验。[本轮非 AI 功能迁移清单](technical-plan.md#137-本轮非-ai-功能迁移清单) · [GA-01 联调契约](go-agent-interface-contract.md) · [Go 操作台账](operation-ledger.md)
 
 # 1. 从服务详情页提交重启
+
+**历史示例。** 下列 OpenResty 页面、操作载荷及 `installId` 仅用于说明旧方案。可复用命令跟踪和授权机制；独立容器的身份、操作及锁需按 Docker 入口重新核验。
 
 1Panel 的网站页把应用键 `openresty` 交给状态组件。组件查询已安装应用，取回 `appInstallId`。用户确认重启后，组件以该安装 ID 和操作名 `restart` 提交请求。由此可定位到本节点的一个安装实例。[网站页](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/frontend/src/views/website/website/index.vue#L13-L20) · [实例查询与确认操作](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/frontend/src/components/app-status/index.vue#L139-L175)
 
@@ -144,7 +146,7 @@ TenantData 在一个租户事务中消费一次性票据、绑定预登记节点
 
 # 6. 联调场景与交付证据
 
-真机按三个工作包执行。注册和采样核对消费、连接代次与样本来源。重启故障分别注入在云端受理、Go 启动和节点结果投递处。备份与恢复核对独立任务、业务记录及归档或目标数据。每个断点的预期状态、实际调用次数、脱敏证据和待填结论统一记在联调页。[联调场景与实测记录](spaces/implementation-review.md#实测记录)
+本轮 M1 在真机核对注册凭证消费、连接代次和 CPU/内存各自的采样来源。旧 M2–M4 的 OpenResty、站点备份和恢复用例保留历史证据要求。候选容器与数据库场景另行确定适配入口、故障点和完成判据。[联调场景与实测记录](spaces/implementation-review.md#实测记录)
 
 终端与制品另验租约撤销、PTY 关闭和分片摘要。容量测试按 CAP-01 独立运行单租户 10,000 节点、连续 72 小时的混合负载。[验收编号注册表](acceptance-ids.json) · [主方案 §15.1 容量门禁](technical-plan.md#151-单租户容量与证据门禁)
 
@@ -192,6 +194,8 @@ flowchart LR
 
 ## 7.3 控制面意图如何映射到安装实例
 
+历史 OpenResty 的具体字段与调用路径如下。原生容器候选单独确定资源版本和节点本地标记。
+
 | 关键字段 | 传递与校验 |
 |---|---|
 | `payload.service` 和 `resourceVersion` | 控制面将别名按版本解析为节点上的安装实例。节点持锁后再次读取绑定；若原实例已卸载，即使同名实例已上线，也须拒绝尚未启动的旧命令 |
@@ -202,6 +206,8 @@ flowchart LR
 
 ## 7.4 网站备份如何留下三份证据
 
+以下为已移出本轮的网站备份适配记录。数据库逻辑备份与恢复需直接核对对应数据库执行器。
+
 一次独立网站备份产生三份证据。`WebsiteBackup` 按别名解析原站点，在 `agent.db` 创建 Waiting 业务记录。后台任务在 `task.db` 推进步骤并写出归档，任务返回后再更新业务记录。即使任务已成功，业务记录仍可能停在 Waiting。节点重启也可能把执行中的任务标为中断。两库和文件系统各自写入。[Go 创建与恢复入口](operation-ledger.md#源码核验记录) · [任务状态写入](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/task/task.go#L291-L293) · [业务记录写回](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/service/backup_website.go#L238-L246) · [中断处理](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/service/task.go#L126-L131) · [备份记录字段](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/model/backup.go#L17-L35)
 
 | 核对时看到的事实 | 原命令的处理 |
@@ -210,11 +216,13 @@ flowchart LR
 | 只有文件，缺少原命令绑定或关闭时的凭据，或任务中断后无法归因 | 原命令进入 `UNCERTAIN` 并只读补证。出现相互矛盾且无法裁决的结果，按状态机转人工复核 |
 | 已确认本地归档，R2 仍在上传或校验 | 记录本地完成时刻。云端制品以原 `artifactId` 达到 `READY` 为准 |
 
-创建的云端操作和权限由 GA-14 登记。隔离恢复另走 P5 的 `backup.restore`，执行前核对源归档、目标版本及依赖归属，完成后核对配置、数据和站点响应，中断后按原任务 checkpoint 核对恢复或回滚。[操作注册表](technical-plan.md#c2-operation-registry-初始示例) · [备份与恢复验收](spaces/implementation-review.md#工作包三--网站备份与归档核验)
+原 GA-14 的网站创建操作已撤出登记计划，原站点恢复用例同步归档。[历史验收用例](spaces/implementation-review.md#网站备份创建与隔离恢复)
 
 # 8. 云端与节点的实施契约
 
 ## 8.1 把接口接到持久化边界
+
+下表的收据、命令准入与结果接收适用于 GA-11 的共用写入链。安装实例、Compose 及网站备份的行保留此前的适配设计；新的容器或数据库目标需重新核验。
 
 | 责任方 | 实施输入与写入点 | 并发和恢复判定 |
 |---|---|---|
@@ -226,6 +234,6 @@ flowchart LR
 
 ## 8.2 实施工序与联调判定
 
-先完成 M1 注册、建连与首采，再接入 M2 单次重启、M3 备份创建、M4 隔离恢复。按节点和能力放量；回退时停止接收该能力的新命令，继续核对已受理命令并检查撤权。[研发计划与各里程碑](go-agent-development-plan.md#分阶段里程碑)
+先完成 M1 的注册、建连与逐指标读取，同时保留 GA-11 的通用写命令能力。原 M2–M4 的领域用例已移出。独立容器重启、数据库备份与隔离恢复须重新核定 operation、适配边界、故障用例和工时。已启用能力回退时停止接收新命令，继续核对已受理命令并检查撤权。[研发计划与各里程碑](go-agent-development-plan.md#分阶段里程碑)
 
 Console Mock 核对页面，API + SQLite 核对授权与持久化，真实 Linux 节点核对注册身份、WSS、Go 入口调用次数及现场效果。每次运行在对应场景填写验证层级。[联调工作页](spaces/implementation-review.md) · [Mock 测试入口](https://github.com/XCAngelWatch/AngelFleetConsole/blob/df715b38d174b2bdad7a5ab58150c05ead6c5d36/tests/e2e/helpers/mock-api.ts) · [本地真实后端用例](https://github.com/XCAngelWatch/AngelFleetConsole/blob/df715b38d174b2bdad7a5ab58150c05ead6c5d36/tests/local/real-backend.spec.ts)
