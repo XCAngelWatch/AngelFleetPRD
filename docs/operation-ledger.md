@@ -19,7 +19,7 @@
 
 | operation | 目标阶段 | Go 复用/改造边界 | taskId / operationMarker | 取消边界 | 结果核验 | 跨入口互斥 | status |
 |---|---|---|---|---|---|---|---|
-| `node.inspect` | P2 | GA-07 复用节点概览并补字段有效性、采样时刻；GA-08 发布受 `node.read` 保护的命令结果 | `commandId`、节点 incarnation、同次 Go 原样本 | 可安全取消请求 | 按原命令查询，与同次 CPU、内存读数核对 | 节点维护模式只读放行 | PLANNED |
+| `node.inspect` | P2 | GA-07 补本机采集有效性和时间。GA-08 分别保存当次命令结果与[逐指标读模型](technical-design.md#72-节点采样怎样进入-xc-仪表盘)，两种读取均需 `node.read` 与目标节点授权 | 原始 `commandId`、incarnation、Go 样本及指标来源命令 | 可安全取消请求 | 对照各项来源命令的原始值和采样时刻；部分失败后清缓存仍能追溯两次采集 | 节点维护模式只读放行 | PLANNED |
 | `service.restart` | P3 | 已核实普通 OpenResty 安装实例的 Compose 重启分支，需增设持久执行标记和现场查询 | `cloudCommandId` + `operationMarker`，记录 installId 和版本 | 启动前可取消，已发起只核对 | 原安装实例、容器身份与启动时间、状态和版本 | 按本节点 installId 加锁，同实例的证书操作和升级共用 | PLANNED |
 | `container.ensure` | P3 | 复用 Docker/Compose service；补目标摘要和资源锁 | 优先传入稳定 `localTaskId` | 仅停止后续步骤 | 受管标签、目标配置摘要、运行状态 | 同一容器/卷/Compose 项互斥 | PLANNED |
 | `file.install` | P3 | 复用文件落盘；新增 R2 artifact 校验与原子替换边界 | `cloudCommandId` + artifactId | 临时文件阶段可取消；替换后按契约核对 | SHA-256、大小、目标路径和 manifest | 目标路径、磁盘和升级锁 | PLANNED |

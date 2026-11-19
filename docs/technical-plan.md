@@ -365,6 +365,8 @@ R2 预签名 URL、CORS、multipart 和 SHA-256 校验的协议细节以附录 A
 
 高频原始采样继续保留在节点。云端保存查询需要的摘要和事件，长期日志与批量时序归档 R2。状态变化与离线告警优先记录；日志正文按游标分页或独立流读取，设置上限、脱敏与保留策略。React 页面区分连接状态、健康状态和采样时间。 Workers Logs 只作短期诊断：Paid 默认保留 7 天、单条日志上限 256 KB，量大时会采样。长期审计和容量指标通过 OTel/Logpush/Tail 导出到受控存储，日志中禁止密钥、ticket、终端输入和源码映射文件。
 
+显式 `node.inspect` 命令另有持久化时限。TenantData 将符合契约的终态探测结果与指标状态一起提交，只有有效项且来源序号较新时才更新该项最后成功值、采样时刻和来源命令，提交后再确认结果，无需等候周期遥测的 300 秒汇总。[逐指标合并规则](technical-design.md#72-节点采样怎样进入-xc-仪表盘) · [冷启动读取契约](go-agent-interface-contract.md#53-逐指标读取与冷启动展示)
+
 # 12. 发布、升级、备份与恢复
 
 dev、staging、prod 使用独立 Worker、DO namespace、D1、Queues、Workflow 和 R2，凭据按环境分离。CI 固定运行时兼容日期与依赖锁文件，执行类型检查、构建、协议 schema 校验、前端契约、数据库迁移和最小真实节点回归。发布先迁移兼容结构，再发布消费者和服务端，再升级 agent，最后开放新功能。 CI 还必须锁定 compatibility_date/flags、D1/DO/Queues/R2 bindings、DO migrations、Queue consumer batch/CPU、Workflow concurrency、环境/区域和 spending limits；执行 wrangler dry-run、staging binding/namespace smoke、迁移前后校验、SBOM/签名/secret scan 与部署 provenance。Service Binding provider 先发，调用方后发；更新期间按 schema 兼容和旧 epoch 重连验证。
@@ -790,7 +792,8 @@ intentHash 覆盖 tenantId、nodeId、nodeIncarnation、operation、规范化业
 | tenant_members | tenantId、userId、role、authorizationVersion，成员唯一键 |
 | nodes | tenantId、nodeId、incarnation、credentialVersion、publicKeyFingerprint、status、capabilities、connectorBuild、adapterVersion、executionMode、coreVersion、agentVersion、managementMode、fenceVersion、revision |
 | enrollments | enrollmentId、ticketHash、requestId、publicKeyHash、expiresAt、consumedAt、nodeId |
-| commands | commandId、nodeId、nodeIncarnation、fenceVersion、idempotencyKey、requestFingerprint、intentHash、operation、resourceVersion、state、lastKnownExecutionState、cancelIntent、reconcileState、sideEffectExtent、evidenceRefs、cancelIneffective、revision、expiresAt、resultRef |
+| commands | commandId、nodeId、nodeIncarnation、fenceVersion、idempotencyKey、requestFingerprint、intentHash、operation、resourceVersion、sampleOrder、state、lastKnownExecutionState、cancelIntent、reconcileState、sideEffectExtent、evidenceRefs、cancelIneffective、revision、expiresAt、resultRef |
+| node_metric_heads / node_metric_values | 每个租户、节点和 incarnation 有独立受理水位、最近已合并的采样尝试和投影版本。每项指标另存本次有效性及最后好值的来源，C.1 给出约束。 |
 | idempotency_receipts | tenantId、idempotencyKey、requestFingerprint、intentHash、commandId、expiresAt、retainedUntil、guardUntil、replayCount、status；正文可清理但 guardUntil 前禁止复用同 key |
 | outbox | eventId、entityId、entityRevision、kind、availableAt、attempts、claimToken、claimUntil、publishedAt、lastError；C.1 使用 `last_error` |
 | command_events | eventId 唯一、commandId、nodeIncarnation、agentSequence、contentHash、eventJson、applyState、appliedRevision、receivedAt；事件不另设 `state` 或 `evidenceHash` 列，状态从 `eventJson` 解析并按合并结果写入命令，内容摘要统一使用 `contentHash` |
@@ -808,6 +811,7 @@ AgentConn SQLite 保存 activeEpoch、activeConnection、dispatchCursor、pendin
 |---|---|
 | `POST /nodes` | 预登记稳定节点身份；重复请求返回同一记录 |
 | `GET /nodes`、`GET /nodes/{nodeId}` | 授权范围内的档案、注册/连接/能力状态与采样时间 |
+| `GET /nodes/{nodeId}/metrics/latest?nodeIncarnation={incarnation}` | 凭当前会话、`node.read` 及目标节点授权，从租户 D1 读取此绑定的 CPU 和内存；各项自带最后好值、Go 采样时间和来源命令。[请求和响应](go-agent-interface-contract.md#53-逐指标读取与冷启动展示) |
 | `POST /enrollments` | 为预登记节点创建一次可见 ticket；禁止覆盖已绑定身份 |
 | `POST /v1/agents/enroll` | 私钥挑战证明，原子消费 ticket 或恢复原请求结果 |
 | `POST /v1/agents/connect-ticket` | 验证节点挑战，签发短期连接凭证 |
@@ -1339,6 +1343,7 @@ CREATE TABLE commands (
     intent_hash TEXT NOT NULL,
     operation TEXT NOT NULL,
     resource_version TEXT NOT NULL,
+    sample_order INTEGER CHECK (sample_order IS NULL OR (operation = 'node.inspect' AND sample_order > 0)),
     payload_json TEXT NOT NULL,
     state TEXT NOT NULL,
     last_known_execution_state TEXT NOT NULL DEFAULT 'NOT_STARTED',
@@ -1364,6 +1369,56 @@ CREATE TABLE commands (
 );
 CREATE INDEX commands_by_node_state
     ON commands (tenant_id, node_id, state, created_at, command_id);
+CREATE UNIQUE INDEX inspect_by_binding_order
+    ON commands (tenant_id, node_id, node_incarnation, sample_order)
+    WHERE sample_order IS NOT NULL;
+
+CREATE TABLE node_metric_heads (
+    tenant_id TEXT NOT NULL,
+    node_id TEXT NOT NULL,
+    node_incarnation TEXT NOT NULL,
+    issued_order INTEGER NOT NULL DEFAULT 0,
+    projection_revision INTEGER NOT NULL DEFAULT 0,
+    latest_attempt_order INTEGER,
+    latest_attempt_command_id TEXT,
+    latest_attempt_state TEXT,
+    connection_epoch INTEGER NOT NULL DEFAULT 0,
+    connection_state TEXT NOT NULL DEFAULT 'OFFLINE',
+    PRIMARY KEY (tenant_id, node_id, node_incarnation),
+    FOREIGN KEY (tenant_id, node_id) REFERENCES nodes (tenant_id, node_id),
+    FOREIGN KEY (tenant_id, latest_attempt_command_id) REFERENCES commands (tenant_id, command_id),
+    CHECK (issued_order >= 0 AND projection_revision >= 0 AND connection_epoch >= 0),
+    CHECK (connection_state IN ('ONLINE', 'OFFLINE')),
+    CHECK ((latest_attempt_order IS NULL AND latest_attempt_command_id IS NULL AND latest_attempt_state IS NULL)
+        OR (latest_attempt_order IS NOT NULL AND latest_attempt_order BETWEEN 1 AND issued_order
+            AND latest_attempt_command_id IS NOT NULL AND latest_attempt_state IS NOT NULL
+            AND latest_attempt_state IN ('SUCCEEDED', 'FAILED')))
+);
+
+CREATE TABLE node_metric_values (
+    tenant_id TEXT NOT NULL,
+    node_id TEXT NOT NULL,
+    node_incarnation TEXT NOT NULL,
+    metric TEXT NOT NULL CHECK (metric IN ('cpuUsedPercent', 'memoryUsedBytes')),
+    latest_valid INTEGER NOT NULL CHECK (latest_valid IN (0, 1)),
+    error_code TEXT,
+    good_order INTEGER,
+    good_value NUMERIC,
+    good_sampled_at INTEGER,
+    good_command_id TEXT,
+    good_execution_epoch INTEGER CHECK (good_execution_epoch IS NULL OR good_execution_epoch > 0),
+    PRIMARY KEY (tenant_id, node_id, node_incarnation, metric),
+    FOREIGN KEY (tenant_id, node_id, node_incarnation)
+        REFERENCES node_metric_heads (tenant_id, node_id, node_incarnation),
+    FOREIGN KEY (tenant_id, good_command_id) REFERENCES commands (tenant_id, command_id),
+    CHECK ((latest_valid = 1 AND error_code IS NULL) OR (latest_valid = 0 AND error_code IS NOT NULL)),
+    CHECK (latest_valid = 0 OR good_command_id IS NOT NULL),
+    CHECK (good_value IS NULL OR
+        (metric = 'cpuUsedPercent' AND typeof(good_value) IN ('integer', 'real') AND good_value BETWEEN 0 AND 100) OR
+        (metric = 'memoryUsedBytes' AND typeof(good_value) = 'integer' AND good_value >= 0)),
+    CHECK ((good_order IS NULL AND good_value IS NULL AND good_sampled_at IS NULL AND good_command_id IS NULL AND good_execution_epoch IS NULL)
+        OR (good_order IS NOT NULL AND good_order > 0 AND good_value IS NOT NULL AND good_sampled_at IS NOT NULL AND good_command_id IS NOT NULL))
+);
 
 CREATE TABLE idempotency_receipts (
     tenant_id TEXT NOT NULL,
@@ -1426,6 +1481,8 @@ CREATE INDEX outbox_ready
 
 时间字段使用 UTC epoch 毫秒，事件顺序使用有界整数。进入 JavaScript API 的序号采用十进制字符串，读取时对序号使用 SQL CAST AS TEXT 投影，避免大整数精度损失。命令状态转换由数据 Worker 的合并函数校验，revision CAS、event applyState 和 outbox 写入置于同一原子批次，并以操作结果断言验证预期转换。
 
+首次受理采样命令时，从当前绑定的 `issued_order` 原子分配 `commands.sample_order`。首次 ready 即创建或更新该绑定的连接摘要，投影版本仍可为零；在线节点还没有采样时，读取返回 ONLINE 和两个空指标。没有已就绪连接也没有采样时，可按 OFFLINE、版本零读取空视图。首次合并符合契约的终态探测结果时成对创建指标行，包括两项探测均失败的情况。按指标类型校验值域与单位，内存按非负整数字节保存；每次写入都验证来源命令属于相同租户、节点、incarnation 和序号。保留投影引用的原命令和已合并结果，或提供可按原 ID 授权查询的归档；只读视图不扫描任务历史。[竞争、重放和恢复规则](technical-design.md#72-节点采样怎样进入-xc-仪表盘)
+
 `commands` 记录在其关联 `idempotency_receipts` 或破坏性效果去重窗口结束前不得物理删除；归档只能转入保留状态并保留原 `commandId`、`intentHash`、`expiresAt` 和最终状态。这样既保留外键和唯一 key guard，也避免收据清理后旧请求被静默当作新命令。
 
 外键的删除策略采用显式业务清理，节点进入退役状态后先完成命令、终端和审计保留处理。eventId 相同而 contentHash 不同属于协议冲突，进入审计与核对。applyState 为 PENDING 或 CONFLICT 时继续保留事件并重试或人工核验，只有 APPLIED 或经过验证的一致 CONSISTENT_NOOP 才产生 result.committed。
@@ -1449,18 +1506,21 @@ CREATE INDEX outbox_ready
 
 | errorCode | HTTP 或流行为 | 客户端处理 |
 |---|---|---|
-| AUTH_EXPIRED | 401，现有流按租约关闭 | 重新登录或刷新授权 |
+| AUTH_EXPIRED | 有时限的票据或租约过期返回 401，现有流按租约关闭 | 重新申请票据或授权 |
+| UNAUTHORIZED | 逐指标 GET 缺少有效登录会话（含过期 Cookie）返回 401 | 清除当前上下文并重新登录 |
+| INVALID_REQUEST | 逐指标 GET 缺少或提供空的 nodeIncarnation 返回 400 | 从已授权的节点详情取得代次后再查 |
 | NODE_FORBIDDEN | 403 | 显示无权操作，停止重试 |
 | CAPABILITY_UNSUPPORTED | 409 | 展示所需 agent 版本与能力 |
 | IDEMPOTENCY_REQUEST_MISMATCH | 409 | 同 key 的 method、path 或规范化 body 不同；停止重试并生成新 key |
 | IDEMPOTENCY_INTENT_MISMATCH | 409 | 指纹相同但 intentHash 或 resourceVersion 不同；报告 canonicalization 或版本不一致，不创建新命令 |
 | IDEMPOTENCY_KEY_EXPIRED | 410 | key guard 尚存；不能复用旧 key，等待清理策略或生成新 key |
 | RESOURCE_REVISION_CONFLICT | 409 | 重新查询资源，用户确认新意图 |
-| NODE_OFFLINE | 查询返回503，允许离线排队的命令返回202 | 展示离线与有效期，区分排队和执行 |
+| NODE_INCARNATION_MISMATCH | 逐指标查询在通过授权后发现绑定代次已变，返回 409 | 清空旧绑定数据，重新获取节点详情后按当前代次读取 |
+| NODE_OFFLINE | 必须从节点实时取值的查询返回 503；持久化的逐指标读取仍返回 200，离线允许排队的命令返回 202 | 节点概览显示离线，各项最后成功值标记过期 |
 | COMMAND_REJECTED | 已有任务查询返回200，state为REJECTED | 显示确定未执行的业务原因，修改意图后创建新命令 |
 | RESULT_UNCERTAIN | 任务状态接口200，state为UNCERTAIN或REVIEW_REQUIRED | 进入核对流程，停止盲目重试 |
 | BACKPRESSURE | 429或受控关闭流 | 按retryAfter退避，显示容量限制 |
-| STORAGE_UNAVAILABLE | 503 | 读取可用缓存并标记stale，停止新的高风险变更 |
+| STORAGE_UNAVAILABLE | 503 | 逐指标接口无法取得授权快照时显示读取失败。仅允许离线缓存的其他视图可在其既有授权范围内显示过期数据；停止新的高风险变更 |
 
 traceId 贯穿 React 请求、控制 API、TenantData、Queue、DO、connector 与原 Go 执行器。统一观测 apiLatency、commandAcceptLatency、commandCompletionLatency、oldestOutboxAge、pendingResultBytes、reconnectCount、terminalInputRTT、leaseRejectCount、命令与本地任务映射完整率及待核对任务数。审计与运行日志分别设置访问权限和保留期限。
 

@@ -173,7 +173,20 @@ flowchart LR
 
 ## 7.2 节点采样怎样进入 XC 仪表盘
 
-**M1 节点概览。** `node.inspect` 调用本机 `GET /api/v2/dashboard/current/node`，在 Go 采集点取得 CPU 百分比、已用内存字节及各自的采集有效性。至少一项有效即可完成命令。失败字段在本次事件中取空值，页面保留同一节点、同一 incarnation 上的最后有效值与时间。两项都失败时命令为 `FAILED`。旧 DTO 缺少有效性时暂停宣告可信采样能力。心跳只更新 `lastSeenAt`。[GA-01 消息及字段样例](go-agent-interface-contract.md) · [操作与源码映射](operation-ledger.md#源码核验记录)
+**M1 的两份记录。** `node.inspect` 调用本机 `GET /api/v2/dashboard/current/node`。Go 在采集点记录 CPU 百分比、已用内存字节、各项有效性和成功时刻。命令详情保存当次原始结果，失败项的值和时刻为空。控制台的节点概览则读取租户 D1 保存的逐指标结果，同屏的两个值可以来自不同命令。缺少采集有效性的旧 DTO 暂停宣告可信采样能力。[逐指标 GET 和完整样例](go-agent-interface-contract.md#53-逐指标读取与冷启动展示) · [Go 采集点](operation-ledger.md#源码核验记录)
+
+**GA-08 的写入顺序。**
+
+1. TenantData 对每个 `(tenantId, nodeId, nodeIncarnation)` 独立编号。在首次受理 `node.inspect` 的 D1 事务中递增该绑定的计数器，将正整数 `sampleOrder` 固定到命令，再提交收据和 outbox。同一幂等请求取回原命令和序号。这里的“最近”按采样命令的受理顺序定义；Go 时钟只给出实际采集时刻，WSS 的 epoch、帧序号与命令 revision 各有自己的作用域。[持久约束](technical-plan.md#c1-核心持久约束示例)
+2. 收到结果后，校验认证绑定、原命令、意图、事件序号与摘要。只处理实际完成两项探测的终态结果。CPU、内存均需有合法单位及有效性。有效项必须带本机值和时间，失败项带错误码及空值、空时间。至少一项有效对应 `SUCCEEDED`，两项探测均失败对应 `FAILED`。未投递、取消、超时或仅报告一般运行错误时，不产生采样尝试。结构矛盾的结果留待核验。
+3. 在同一 D1 事务中应用原事件、命令状态及读模型变更。新命令的序号高于已发布尝试时，成对替换 `latestAttempt` 及 CPU、内存的 `latestValid/errorCode`。对每个有效项，再独立比较它与该指标最后成功的序号，较大者更新数值、Go 采样时间、来源命令和可证实的执行 epoch。失败项始终保留旧好值。任一采样投影字段变化时，整份投影的 `projectionRevision` 在该事务内只加一。所有变更须受同一事件合并条件保护；事务回滚时继续保留待合并事件。事务完成后才允许 `result.committed`。
+4. `cmd-002` 先入库且仅 CPU 成功时，内存先显示无历史；迟到的 `cmd-001` 如有有效内存且序号高于已有内存来源，仍可补入该值。最新尝试和 CPU 来源继续指向 `cmd-002`，内存保留“最近采集失败”。同一事件、序号和内容的重报只返回已提交确认；同标识内容冲突走既有冲突流程，保留原投影。旧 incarnation 的结果只能进入其原命令的核对流程。
+
+**GA-09 的读取顺序。** 清缓存或新开标签页时，页面先从有权访问的节点详情取得当前 incarnation，再请求 `metrics/latest`。TenantData 在主库同一读快照内核验成员、`node.read`、节点范围和 incarnation，返回连接摘要及两项指标，并设置 `Cache-Control: private, no-store`。对每项显示 `lastGood.value`、自己的 `lastGood.sampledAt` 和来源 `commandId`；合法零值照常显示。无历史显示「暂无数据」。最新尝试失败时，页面保留旧值、标记过期并显示错误原因。切换节点、重绑、撤权或退出即清除旧视图；同一上下文内用请求代次丢弃迟到响应，命令详情链接仍受同一授权约束。[清空缓存的实测场景](spaces/implementation-review.md#两次采样后的无缓存验收)
+
+连接摘要由 AgentConn 的 ready 和关闭事件同步到 D1，按绑定、epoch 和生命周期顺序更新。断开的旧连接不能关闭新代次。读模型用已提交的同绑定连接状态判断过期：离线、无好值、最近探测失败或好值无法证明采自当前已就绪的连接代次时，`stale=true`。只有持久化的投递、执行和节点 journal 证据能唯一确定原执行代次时才写入 good_execution_epoch，无法唯一归因则留空并标记过期。补报的传输 epoch 仅用于验证本次连接。重连和心跳只刷新连接信息，同一 `projectionRevision` 仍可能返回不同的连接状态。各指标待新代次实际采集成功后分别恢复新鲜。
+
+**已有结果与重建。** 服务重启直接读取 D1。重建同一绑定时，只用已合并、有原始序号、有效性和来源证据的命令重算。在一致快照上生成候选记录，事务切换前核对事件水位；有并发写入就补齐新增事件再切换。保留含在途命令的受理水位与现有投影版本，内容发生变化才递增版本。旧格式没有可靠序号或采集元数据时保留命令历史，首次可信读数由新的 `node.inspect` 产生。入库时间和周期摘要均不能补造历史。重装后从新 incarnation 的空投影开始。
 
 **扩展仪表盘速率。** `GET /api/v2/dashboard/current/:ioOption/:netOption` 返回累计字节数。XC 在同一租户、节点、incarnation 和磁盘或网卡内，用两次有效读数的增量除以时间差。第一份样本、选择器变化、计数回退或时间未递增时重建基线。只有两次有效计数相等才显示零速率。[扩展场景实测记录](spaces/implementation-review.md#实测记录) · [原首页的时间差与单位换算](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/frontend/src/views/home/index.vue#L1082-L1126)
 

@@ -1,6 +1,6 @@
 import { readFile, writeFile, mkdir, rm, copyFile, readdir } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
-import { dirname } from 'node:path';
+import { basename, dirname } from 'node:path';
 import MarkdownIt from 'markdown-it';
 import { build } from 'esbuild';
 
@@ -128,8 +128,8 @@ const navigationGroups = [
   {label: '实现设计', pages: [design, contract]},
   {label: '操作与验收', pages: [ledger, review]}
 ];
-const sampleFile = 'examples/go-agent-first-sample.json';
-const supportingDocs = ['platform-constraints.md','angelfleetprd-threat-model.md','go-agent-development-plan.md','spaces/implementation-review.md',sampleFile];
+const sampleFiles = ['examples/go-agent-first-sample.json', 'examples/node-metric-read.v1.json'];
+const supportingDocs = ['platform-constraints.md','angelfleetprd-threat-model.md','go-agent-development-plan.md','spaces/implementation-review.md', ...sampleFiles];
 const searchRecords = documents.flatMap(doc => doc.records.map(record => ({...record, label:doc.label})));
 
 // Keep repository links usable in Markdown and resolve them to the reading pages in HTML.
@@ -153,7 +153,7 @@ md.renderer.rules.link_open = (tokens, index, options, env, self) => {
   } else if (!isRepositoryLink) {
     token.attrSet('href', url.pathname.slice(new URL(site).pathname.length) + url.search + url.hash);
   }
-  if (path === sampleFile) token.attrSet('download', 'go-agent-first-sample.json');
+  if (sampleFiles.includes(path)) token.attrSet('download', basename(path));
   return self.renderToken(tokens, index, options);
 };
 

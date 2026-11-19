@@ -4,6 +4,8 @@
 
 [下载完整联调样例（JSON）](examples/go-agent-first-sample.json)。`timeline` 给出交互顺序；`http` 收录 11 对请求与响应，`websocket` 收录带发送方向的 10 帧原文，`localObservation` 提供一次本机观察，`cases` 给出 11 个独立分支。下文用条目 ID 定位原文。示例域名和占位票据用于本地回放，接入测试环境时使用实际域名、会话与新挑战。
 
+GA-08 至 GA-10 使用独立读取契约 `node-metric-read.v1`。需要在新标签页展示各指标最后有效值时，直接看[逐指标读取与冷启动展示](#53-逐指标读取与冷启动展示)及[两次采样的联调 JSON](examples/node-metric-read.v1.json)。
+
 # 1. 仓库、进程与发行边界
 
 **节点代码归 `XCAngelWatch/AngelFleetAgent`。** 产品团队在该下游仓保留 1Panel 的提交历史，首个同步点为 `aaba86d0ef71a31ee319e74998ffe83c64abf4b6`。GA-04 负责仓库供应、写权限、服务代码和发行。connector 与采集点补丁在同一仓验证兼容性，三个 Go 模块可分别构建。[上游固定提交](https://github.com/1Panel-dev/1Panel/commit/aaba86d0ef71a31ee319e74998ffe83c64abf4b6)
@@ -142,11 +144,84 @@ GA-07 在下游采集点增加可选 `data.collection`。其中 `sampledAt` 是�
 | `command.result` | Go 持久化结果并报告各指标。示例为 `cpuUsedPercent=23.5`（percent）、`memoryUsedBytes=1073741824`（bytes，可显示为 1 GiB）。至少一项有效时命令可为 `SUCCEEDED`；两项均失败时为 `FAILED` 并保留采集错误。 |
 | `result.received` | AgentConn 确认已持久收件。Go 继续保留结果；重连补报时复用原 eventId、agentEventSequence 和 contentHash，使用新连接的 epoch 与 sequence。 |
 | `result.committed` | D1 已按事件序号、摘要及 revision 合并。仅 `APPLIED` 或证据相符的 `CONSISTENT_NOOP` 可以确认；Go 此时才进入已确认结果的保留期。 |
-| `nodes.list`、`node.read`、`command.read` | Console 分别读取租户节点列表、节点摘要与 `GET /v1/tenants/{tenantId}/commands/{commandId}`。用摘要的 lastSampleCommandId 关联命令，核对租户、nodeId、incarnation 后渲染 `result.metrics`。切换节点或刷新时重新校验授权，按节点隔离缓存。 |
+| `nodes.list`、`node.read`、`command.read` | Console 读取租户节点列表、节点摘要与命令详情。摘要的 lastSampleCommandId 可定位一次原始命令；命令页展示该次 `result.metrics`。节点概览按 §5.3 分别取得两项读数与来源。 |
 
 **一次结果与当前页面读数。** 本次失败指标写 `value:null`、`sampledAt:null`、`valid:false`、`stale:true`、`errorCode:"COLLECTION_FAILED"`。页面只用本次有效值更新对应指标。失败项保留同一节点最后成功的数值和时刻；没有历史则显示「暂无数据」。两项均失败时节点摘要维持上次成功时间。离线时最后好值标记为过期，心跳只更新 lastSeenAt，合法 CPU 零值显示为 0。
 
-**刷新后的部分失败仍有一项接口缺口。** 样例 `partial-collection.display` 定义了旧内存值的展示预期。若最近一次命令只采到 CPU，`lastSampleCommandId` 只能定位这次命令。新打开的页面还需要经过授权的途径取得同一租户、节点及 incarnation 上最后成功的内存值和时间。GA-08 与 GA-09 在联调前确定持久化和读取方式，涉及报文字段变更时更新契约版本。GA-10 清空页面缓存后重测该场景。
+## 5.3 逐指标读取与冷启动展示
+
+**节点概览用一次授权 GET 读取 CPU、内存及各自来源。** S1、S2 表示同一绑定先后受理的两次 `node.inspect`。各用独立幂等键提交，等到结果写入 D1 再读。下表中的时间均为 Go 在采集点记录的 Unix 毫秒。
+
+| 已提交的采样结果 | CPU 读数 / 采样时刻 / 来源命令 | 内存读数 / 采样时刻 / 来源命令 |
+|---|---|---|
+| S1（`cmd-001`）两项成功 | 23.5% · 1795046409000 · `cmd-001` | 1 GiB · 1795046409000 · `cmd-001` |
+| S2（`cmd-002`）只有 CPU 成功 | **0%** · **1795046420000** · **`cmd-002`** | **1 GiB** · **1795046409000** · **`cmd-001`**，标记「上次有效，本次采集失败」 |
+
+GA-08 在 TenantData D1 按 `(tenantId,nodeId,nodeIncarnation)` 保存最近一次已有终态采样结果的命令，并按指标保存最后有效的值、采样时间与来源命令。控制面受理命令时为该绑定分配递增的 `sampleOrder`。合并终态结果时，在同一事务中更新命令与读取数据。S2 推进最近命令及 CPU，内存保留 S1，同时登记 S2 的内存失败。重复回执不得再次推进版本；迟到结果仍可补入有效指标，条件是它的受理序号高于该指标上次好值的来源序号。断线、心跳和重连不改写来源与时间。[落库与乱序合并](technical-design.md#72-节点采样怎样进入-xc-仪表盘)
+
+**请求。** GA-09 先经已授权的节点详情取得当前 incarnation，再从同源页面发送下列 GET。服务端逐次检查登录会话、租户成员资格、`node.read` 和目标节点授权，再核对必填的 `nodeIncarnation`。每次响应均带 `Cache-Control: private, no-store` 和本次请求的 `X-Trace-Id`。GA-10 从响应头读取追踪号，关联该次 GET 的控制面日志；错误体的 `traceId` 与响应头相同。
+
+```http
+GET /v1/tenants/tenant-a/nodes/node-a/metrics/latest?nodeIncarnation=inc-01 HTTP/1.1
+Host: control.example.invalid
+Cookie: af_session=${USER_SESSION}
+Accept: application/json
+```
+
+在测试环境中，将 `CONTROL_ORIGIN` 设为控制台源站，`COOKIE_JAR` 指向已登录测试用户的 Cookie 文件，路径和代次换成该用户获准访问的节点。以下请求只读，刷新不会创建第三条采样命令。
+
+```sh
+curl -sS -i --cookie "$COOKIE_JAR" --get \
+  "$CONTROL_ORIGIN/v1/tenants/tenant-a/nodes/node-a/metrics/latest" \
+  --data-urlencode "nodeIncarnation=inc-01"
+```
+
+**S2 完成后的响应。** 清空页面缓存后或新开标签页，同一授权请求取得同样的指标数据。下列响应头及完整 JSON 可直接用于 Mock。
+
+```http
+HTTP/1.1 200 OK
+Content-Type: application/json
+Cache-Control: private, no-store
+X-Trace-Id: trace-s2-metrics-read
+```
+
+```json
+{
+  "contractVersion": "node-metric-read.v1",
+  "tenantId": "tenant-a",
+  "nodeId": "node-a",
+  "nodeIncarnation": "inc-01",
+  "connectionState": "ONLINE",
+  "projectionRevision": "2",
+  "latestAttempt": {"commandId": "cmd-002", "sampleOrder": "2", "state": "SUCCEEDED"},
+  "metrics": {
+    "cpuUsedPercent": {
+      "unit": "percent",
+      "lastGood": {"value": 0, "sampledAt": 1795046420000, "commandId": "cmd-002"},
+      "latestValid": true, "stale": false, "errorCode": null
+    },
+    "memoryUsedBytes": {
+      "unit": "bytes",
+      "lastGood": {"value": 1073741824, "sampledAt": 1795046409000, "commandId": "cmd-001"},
+      "latestValid": false, "stale": true, "errorCode": "COLLECTION_FAILED"
+    }
+  }
+}
+```
+
+| 字段或情形 | 服务端语义与前端行为 |
+|---|---|
+| `latestAttempt`、`latestValid`、`errorCode` | 指向已有终态采样结果中 `sampleOrder` 最大的命令及该次各项结果。两项都失败仍推进最近命令，`state:"FAILED"`。尚无结果时三个字段均为 `null`。 |
+| `lastGood` | 单位由指标的 `unit` 给出。渲染 `lastGood.value` 和它自身的 `sampledAt`；来源链接为租户内 `GET /v1/tenants/{tenantId}/commands/{lastGood.commandId}`，同样鉴权。两项均有固定键。从未成功的指标返回 `lastGood:null`，页面显示「暂无数据」，时间与来源留空。 |
+| `stale`、`connectionState` | 失败项、无好值、离线或新激活连接还未采到该项有效值时标过期。可同时显示「节点在线」和「内存上次有效」。重连时，按新激活 epoch 取得的有效采样逐项清除过期；旧连接执行的补报按原执行代次判定。 |
+| `projectionRevision`、`sampleOrder` | 都是按整数比较的十进制字符串。前者只随该绑定已保存的指标投影内容变化。连接切换可改变 `stale` 而保持同一修订号。后者表示命令受理顺序。 |
+| `401 UNAUTHORIZED`、`403 NODE_FORBIDDEN` | 当前接口的会话 Cookie 缺失、过期或失效均返回 401，提示重新登录。跨租户、无目标授权或撤权返回 403。错误体仅含 `errorCode`、`traceId`。页面清除该上下文读数与来源链接。 |
+| `400 INVALID_REQUEST`、`409 NODE_INCARNATION_MISMATCH` | 代次缺失或为空返回 400。经授权但代次已更换返回 409。页面丢弃旧绑定数据，重新获取有权访问的节点详情，再按新代次读取。 |
+| `503 STORAGE_UNAVAILABLE` | D1 或同一主库快照的授权、指标数据不可读时返回 503。错误体仅含 `errorCode`、`traceId`。页面隐藏数值与来源并显示「读取失败，可重试」。重试须重新授权，期间不展示旧缓存中的读数。 |
+
+**清缓存后的首次绘制。** GA-09 在会话与节点上下文就绪后发起读取，等待期间显示加载状态。到达响应时核对租户、节点、incarnation 和本地请求序号，同一绑定拒绝较低的 `projectionRevision`。按最新请求处理同修订号的连接状态变化。页面逐项渲染上述字段，CPU 的数值 0 也有效。以 UTC+8 显示这组样例时，CPU 卡显示「0% · 08:00:20 · cmd-002」，内存卡显示「1 GiB · 08:00:09 · cmd-001 · 上次有效，本次采集失败」。打开 S2 命令详情时，仍应看到原始内存 `value:null` 和 `sampledAt:null`；点内存读数的来源则打开 S1。
+
+[下载完整联调样例](examples/node-metric-read.v1.json)可核对两次命令创建、两帧 Go 原始结果、两次命令详情与两次指标 GET，并回放空历史、离线和错误响应。Go 与控制面沿用 `ga01.v1` 命令协议，新增的读取响应使用 `node-metric-read.v1`。GA-10 将空缓存读取与两次 Go 原始值、命令及页面逐项核对。[真机验收与证据清单](spaces/implementation-review.md#两次采样后的无缓存验收)
 
 # 6. 两端对接与验收
 

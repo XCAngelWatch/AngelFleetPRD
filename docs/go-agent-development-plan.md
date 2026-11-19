@@ -2,7 +2,7 @@
 
 **首个里程碑（M1）**交付节点概览。用户在控制台选择一台 Linux 节点，就能看到它刚采集的 CPU 和内存。节点断线后，仍能查到每项最近一次有效采样的时间。首版沿用 1Panel core/agent，由新增的 Go connector 主动连云。
 
-**截至 2026-11-19**，GA-01 的仓库布局和接口样例已验证，GA-02 至 GA-19 待实施。现在可分别派给测试 GA-02（环境）、控制面 GA-03（注册）、Go GA-04（节点服务）、前端 GA-09（按样例开发）。[首批派工单](#m1-派工单) · [GA-01 接口与样例](go-agent-interface-contract.md) · [实测记录](spaces/implementation-review.md#实测记录)
+**截至 2026-11-19**，GA-01 的仓库布局和接口样例已验证，GA-08 至 GA-10 的[逐指标读取契约](go-agent-interface-contract.md#53-逐指标读取与冷启动展示)已定稿。GA-02 至 GA-19 待实施。现在可分别派给测试 GA-02（环境）、控制面 GA-03（注册）、Go GA-04（节点服务）、前端 GA-09（按样例开发）。[首批派工单](#m1-派工单) · [GA-01 接口与样例](go-agent-interface-contract.md) · [实测记录](spaces/implementation-review.md#实测记录)
 
 ## 分阶段里程碑
 
@@ -32,9 +32,9 @@ P0–P6 是整版产品阶段，M1–M4 是本计划的四次交付，GA 编号�
 | GA-05 主动 WSS 的云端接收 · 控制面 · 3–5 | GA-01，联调需 GA-03 | Console 云端入口新增 connect-ticket 发放、Upgrade 分流、AgentConn DO 及 namespace 绑定。鉴权后按节点选 DO，持久化待确认和激活代次 | 用真实测试 Worker/DO 验证 Upgrade、重连及新 epoch 的 ready；旧连接迟到的 ready 不获投递，未就绪时不标记业务可用。DEV03、NET-AGENT |
 | GA-06 节点连接与只读 journal · Go · 2–4 | GA-04，联调需 GA-05 | 新 `internal/connection`、`internal/journal`。握手协商能力，将最高 epoch 落盘再发 ready；持久记录 `node.inspect` 的 commandId、意图与待确认结果 | 进程在持久化前后退出均能重连。拒绝旧代次，重发同一命令能返回既有结果；journal 丢失进入可信恢复。DEV03、FI-CMD |
 | GA-07 节点采集适配 · Go · 2–4 | GA-01 | 1Panel `agent/app/service/dashboard.go` 的 `LoadCurrentInfoForNode` 与 `LoadCurrentInfo`、相应 DTO，加上 connector 的 `node.inspect` 白名单适配。采集点产生各指标的有效性、时间、单位和错误原因 | CPU、内存与同次原样本一致。让单项采集失败，区分无有效样本、最后有效值和真实零值；既有 Dashboard 消费者可继续读取原字段。AC-HOST、FI-HOST |
-| GA-08 只读命令与结果查询 · 控制面 · 4–7 | GA-01，联调需 GA-03、GA-05、GA-06、GA-07 | 租户内实现 `GET /nodes`、`GET /nodes/{nodeId}` 及最近样本引用。为每项指标持久化最后有效值、时间和来源命令，确定按 `node.read` 授权的读取方式。如扩展报文，另行版本化。受理 `node.inspect` 时，同一 D1 事务写意图、收据、初始审计和 outbox，提交后返回 202。实现 `dispatchKick/beginDispatch`、按命令合并结果及 `result.committed` | 相同请求返回同一命令。D1、DO、journal 与详情页指向同次采样；只有 D1 已合并或确认同一结果才向节点确认。断线保留样本时间，快路径失败保留待投递记录，自动队列补偿在 GA-11 验收。AC-CMD、AC-AUTH、AC-HOST |
-| GA-09 节点概览页面 · 前端 · 2–3 | GA-01，联调需 GA-08 | Console `src/lib/api/`、`dashboard-pages.ts`、权限目录与新节点页。展示连接、采样时间、CPU/内存和 stale；按租户、节点、incarnation 隔离查询，新会话按 GA-08 授权结果恢复每项读数 | Mock 覆盖首次等待、合法 0、单项失败、切换后旧响应晚到；本地 API 层验证无权深链接与撤权后的读取。AC-UI、AC-AUTH、FI-HOST |
-| GA-10 M1 端到端验收 · 测试 · 2–3 | GA-02 至 GA-09 全部就绪 | 使用部署后的 Console、Worker/D1/DO、两台 Linux 节点及真实 Go。按[联调记录](spaces/implementation-review.md)串起注册审计、epoch、commandId、Go 原始样本和页面读数 | 两节点均有可配对样本，本租户只能看自己的节点。断线标 stale，重连更新。第二次仅 CPU 有效后清缓存，CPU 与内存分别匹配各自最近有效的来源命令和时间，附三端记录。DEV01、DEV02、DEV03、AC-HOST、FI-HOST、AC-UI |
+| GA-08 只读命令与结果查询 · 控制面 · 4–7 | GA-01，联调需 GA-03、GA-05、GA-06、GA-07 | 实现租户节点列表、详情及[逐指标 GET](go-agent-interface-contract.md#53-逐指标读取与冷启动展示)。在 D1 受理事务分配绑定内的 sampleOrder，与命令意图、收据、初始审计和 outbox 一起提交后返回 202。沿用 dispatchKick/beginDispatch；结果事务同时更新命令与每项最后有效值、采样时间、来源 | 按 S1→S2 受理命令，顺序或逆序合并结果，CPU 均来自 S2，内存均来自 S1；旧结果重报不改变读数或版本。只有 D1 已合并或确认同一结果才回 result.committed。授权、代次与离线读通过，快路径失败保留待投递记录。AC-CMD、AC-AUTH、AC-HOST |
+| GA-09 节点概览页面 · 前端 · 2–3 | GA-01，联调需 GA-08 | 在 Console 的 `src/lib/api/`、节点页、权限目录及导航接入 GET。首次进入、硬刷新或新标签页，先读授权节点详情取得 incarnation，再一次读取两项的值、时间、状态与命令来源；单独展示连接状态 | 用[两次采样样例](examples/node-metric-read.v1.json)开发。清缓存后 CPU 显示 0%，内存显示上次有效的 1 GiB、原时间与来源，并提示本次失败。首次无值、节点切换时的迟到响应、撤权及其深链接均有独立用例。AC-UI、AC-AUTH、FI-HOST |
+| GA-10 M1 端到端验收 · 测试 · 2–3 | GA-02 至 GA-09 全部就绪 | 在隔离 Console、Worker/D1/DO 和两租户各自的 Linux 节点取证。先核对注册、连接及首次采样，再按[两次采样后的无缓存验收](spaces/implementation-review.md#两次采样后的无缓存验收)验证第二次仅 CPU 成功 | 新会话只读，不产生第三条命令。CPU 和内存各自匹配正确的 Go 原值、采样时间、来源命令；断线、重连、跨租户、重装后身份隔离均有证据。附两次 Go 原样本、D1 记录、授权 GET 和页面观察值。DEV01、DEV02、DEV03、AC-HOST、FI-HOST、AC-UI |
 
 ## M1 之后的派工单
 
@@ -64,12 +64,11 @@ Go 和控制面联调使用同一份[请求、响应与双向帧 JSON](examples/
 
 ## 验收证据与排期决策
 
-GA-01 的样例可在本仓运行 `npm run check:ga01` 复核。四个里程碑共用一份[联调验收记录](spaces/implementation-review.md#实测记录)，其中区分 Mock、本地 API 与真实节点证据。评审时记录 runId、实际构建与三端观察值。
+运行 `npm run check:ga01` 复核注册到首次采样的链路，运行 `npm run check:metric-read` 从两条命令结果核对[逐指标读取样例](examples/node-metric-read.v1.json)。四个里程碑共用一份[联调验收记录](spaces/implementation-review.md#实测记录)，其中区分 Mock、本地 API 与真实节点证据。评审时记录 runId、实际构建与三端观察值。
 
 | 接单前仍要落实的事项 | 主责与截止点 | 解锁条件 |
 |---|---|---|
 | 测试租户、镜像、域名和资源绑定 | 测试 / 控制面 · GA-02，GA-10 真机验收前 | 两个租户各有一台可采集的 Ubuntu 24.04 LTS/amd64 测试节点，记录 socket 权限、TenantData / AgentConn 绑定。GA-03 实现同源 Cookie / CSRF 与节点授权。 |
-| 跨会话保留每项最后有效值 | 控制面 / 前端 · GA-08、GA-09 联调前 | `ga01.v1` 只给出最新样本命令。确定读取投影的接口和权限，再以 GA-10 空缓存场景核对。 |
 | 下游仓与发行配置 | Go · GA-04 | 在 GA-01 指定的产品仓建立模块，验证服务以约定 UID 连接本机 socket，登记构建版本。 |
 | 网站备份创建名称、权限、目标与 R2 范围 | 产品 / 控制面 · GA-14，实现创建入口前 | 在主方案 C.2、操作台账和权限目录登记创建操作。若纳入云端制品，GA-16 另验对象版本、大小与摘要，按范围复估。 |
 | 执行标记补丁与隔离恢复目标 | Go / 测试 · GA-12、GA-17 开始前 | 确认实际执行分支可保留标记，并准备能反复还原的测试站点；按实测结果决定重启、恢复是否可交付。 |

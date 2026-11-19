@@ -8,8 +8,8 @@ const stateDefinition = JSON.parse(await readFile('docs/command-state.json','utf
 const builtStateDefinition = JSON.parse(await readFile('dist/command-state.json','utf8'));
 const acceptanceRegistry = JSON.parse(await readFile('docs/acceptance-ids.json','utf8'));
 const builtAcceptanceRegistry = JSON.parse(await readFile('dist/acceptance-ids.json','utf8'));
-const sampleFile = 'examples/go-agent-first-sample.json';
-const supportingDocs = ['platform-constraints.md','angelfleetprd-threat-model.md','go-agent-development-plan.md','spaces/implementation-review.md',sampleFile];
+const sampleFiles = ['examples/go-agent-first-sample.json', 'examples/node-metric-read.v1.json'];
+const supportingDocs = ['platform-constraints.md','angelfleetprd-threat-model.md','go-agent-development-plan.md','spaces/implementation-review.md', ...sampleFiles];
 const site = 'https://xcangelwatch.github.io/AngelFleetPRD/';
 const expectedDownloads = {
   'index.html': 'technical-plan.md',
@@ -60,9 +60,12 @@ for (const [file, stats] of [['index.html',manifest],['technical-design.html',ma
   assert.equal(stats.diagrams, published.diagrams, `Manifest diagrams mismatch for ${file}`);
 }
 for (const document of supportingDocs) assert.equal(await readFile(`dist/${document}`,'utf8'),await readFile(`docs/${document}`,'utf8'),`${document} download must match repository source`);
-const sampleText = await readFile(`dist/${sampleFile}`, 'utf8');
-JSON.parse(sampleText);
-assert(contractHtml.match(/<a\b[^>]*>/g).some(link => link.includes(`href="${sampleFile}"`) && /\bdownload\b/.test(link)),'Contract must link to the downloadable JSON examples');
+const sampleTexts = await Promise.all(sampleFiles.map(async file => {
+  const sample = await readFile(`dist/${file}`, 'utf8');
+  JSON.parse(sample);
+  assert(contractHtml.match(/<a\b[^>]*>/g).some(link => link.includes(`href="${file}"`) && /\bdownload\b/.test(link)), `Contract must link to downloadable ${file}`);
+  return sample;
+}));
 assert.deepEqual(builtStateDefinition,stateDefinition,'Command state fixture must match repository source');
 assert.deepEqual(builtAcceptanceRegistry,acceptanceRegistry,'Acceptance ID registry must match repository source');
 assert.equal(await readFile('dist/404.html','utf8'),html,'404 page must use the generated document shell');
@@ -148,7 +151,7 @@ for (const taskId of taskIds) {
   assert(searchData.some(record => record.page === development.file && record.id === anchor),`Missing searchable task: ${taskId}`);
 }
 const pageContents = pages.map(page => page.html).join('\n');
-const publication = markdownSources + pageContents + sampleText;
+const publication = markdownSources + pageContents + sampleTexts.join('\n');
 assert(!/\/Volumes\/|\/Users\/|visualize:|page_c8db|chatgpt\.com\/space/.test(publication),'Private source reference was published');
 assert(!/gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/.test(publication),'Credential-like content detected');
 for (const required of ['AngelFleetConsole','core/agent','72h','UNCERTAIN','REVIEW_REQUIRED','REQ10','REQ11','REQ12','DEV08','CAP-01','NET','maxAuthorizationStaleness','managementMode','max_batch_timeout','参数冻结表','可选系统 OTA']) assert(source.includes(required),`Required topic missing: ${required}`);
