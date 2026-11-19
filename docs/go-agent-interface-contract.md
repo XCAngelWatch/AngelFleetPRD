@@ -71,7 +71,7 @@ XCAngelWatch/AngelFleetAgent/
 | `enroll.challenge` | `phase:"challenge"`，携带 enrollmentId、requestId、publicKey、algorithm。 | `200` 返回 challengeId、algorithm、expiresAt、proofInput。示例挑战有效 60 秒。 |
 | `enroll.prove` | 沿用同一组入参，改为 `phase:"prove"`，附 challengeId 与 signature。 | 首次绑定返回 `201`，包含 tenantId、nodeId、nodeIncarnation、credentialVersion、keyVersion、publicKeyHash。服务端在同一事务中消费票据、绑定节点和写成功审计。 |
 
-**待补的注册恢复用例。** 公开样例分别覆盖注册成功后丢回包，以及未消费票据过期。已消费票据在原设备请求恢复前到期时，恢复窗口、超窗响应和人工恢复入口仍待控制面与 Go 共同冻结。该分支须查原绑定并核对节点吊销状态，禁止覆盖身份或重复消费；GA-10 记录到期前后行为、绑定行数与成功审计数。
+**待补的注册恢复用例。** 公开样例分别覆盖注册成功后丢回包，以及未消费票据过期。恢复须核对原绑定、公钥和节点吊销状态，保持原身份与消费记录。GA-03／04 在联调前确认恢复截止、超窗响应和人工处置交接，候选规则见 [ADR-09](technical-design.md#adr-09--注册响应丢失后的恢复截止点)。GA-10 比对挑战发放、证明到达与到期时刻，并记录绑定、消费与成功审计计数。
 
 **注册与建连共用的签名规则。** 公钥为原始 32 字节，签名为 64 字节，publicKey、proofInput、signature 均使用无填充 base64url。Go 解码 proofInput，核对 `domain=angelfleet.node-proof.v1`、可信 audience、用途、requestId、公钥摘要、挑战标识及有效期。注册用途 `enroll` 还须匹配 enrollmentId；建连用途 `connect` 须匹配 nodeId、nodeIncarnation、keyVersion、protocolVersion。确认后对**解码所得原字节**作 Ed25519 签名。服务端按已保存的一次性挑战核对绑定、期限与签名。下文 Go 片段执行最后的签名步骤。
 
