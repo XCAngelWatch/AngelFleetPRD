@@ -6,6 +6,8 @@ AngelFleetConsole 负责控制台和云端 API。Linux 节点保留 1Panel Go co
 
 ## 执行摘要
 
+**2026-11-19 更新 · GA-08 至 GA-10 的逐指标读取方案已定稿。** 第二次采样只有 CPU 成功时，清空缓存后，控制台应显示第二次的 CPU，以及第一次的内存值、采样时间和来源命令。联调样例已验证，真机验收待执行。[接口请求与响应](go-agent-interface-contract.md#53-逐指标读取与冷启动展示) · [两次采样的真机验收](spaces/implementation-review.md#两次采样后的无缓存验收)
+
 | 决策 | 对交付的影响 |
 |---|---|
 | 首个里程碑 M1 | 在两个租户各自的控制台看到本节点 Go 采集的 CPU、内存与采样时间，断线后能辨认最后好值。GA-01 已验证契约和样例，真机结果由 GA-10 验收。[Go Agent 派工单](go-agent-development-plan.md) |
@@ -51,7 +53,7 @@ flowchart LR
 | 要完成的工作 | 去哪里查 |
 |---|---|
 | 排期、派工、交接 | [§14 阶段退出条件](#14-迁移路线与任务级工作包)和 [Go Agent 研发计划](go-agent-development-plan.md)给出依赖、责任角色和工期。 |
-| 开始 Go / Console 联调 | [GA-01 契约](go-agent-interface-contract.md)固定仓库目录、注册、握手和采样线格式。[完整 JSON](examples/go-agent-first-sample.json)供两端共用，[联调验收记录](spaces/implementation-review.md)登记实测。 |
+| 开始 Go / Console 联调 | [GA-01 契约](go-agent-interface-contract.md)确定仓库目录和节点协议。对接注册、建连用[首次采样 JSON](examples/go-agent-first-sample.json)，对接清缓存后的概览用[逐指标读取 JSON](examples/node-metric-read.v1.json)。实测结果填入[联调验收记录](spaces/implementation-review.md)。 |
 | 把一次操作从设计落实到源码 | [技术详细设计](technical-design.md)以一次重启串起三端；[Go 操作台账](operation-ledger.md)登记执行入口、取消边界和现场核验方法。 |
 | 查协议、数据和迁移范围 | [附录 A](#附录-a--协议数据与可靠性细则)规定协议，[附录 B](#附录-b--v2-源码基线与完整迁移矩阵)登记源码范围，[附录 C](#附录-c--数据约束与操作契约)列数据约束和操作注册表。状态机转移取自 [command-state.json](command-state.json)。 |
 | 追踪需求和发布证据 | [附录 D](#附录-d--产品需求与设备生命周期)关联产品旅程、权限与验收编号，[acceptance-ids.json](acceptance-ids.json)登记有效编号。容量口径见 [§15.1](#151-单租户容量与证据门禁)及[平台约束](platform-constraints.md)，安全边界见[威胁模型](angelfleetprd-threat-model.md)。 |
