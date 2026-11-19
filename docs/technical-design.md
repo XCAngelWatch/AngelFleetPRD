@@ -1,6 +1,6 @@
 # 技术详细设计
 
-操作员在 XC 控制台重启一个已安装的 OpenResty 实例，浏览器随即断线。恢复连接后，任务中心怎样找到原命令，又能凭什么证据判断该实例确实重启过？本页以 1Panel 的安装实例操作为源码依据，设计首版保留 Go core/agent 时的命令、注册、终端和文件链路。文中的云端 API、journal 和验收场景均为待实施设计。
+操作员在 AngelFleetConsole（文中简称 XC 控制台）重启一个已安装的 OpenResty 实例，浏览器随即断线。恢复连接后，任务中心怎样找到原命令，又能凭什么证据判断该实例确实重启过？本页以控制台已有的身份、审计接口和 1Panel 的 Go 执行入口为依据。节点注册、控制连接、云端命令、本地 journal 及其联合验收均属待实施范围。[Go Agent 研发计划](go-agent-development-plan.md)
 
 # 1. 从服务详情页提交重启
 
@@ -105,6 +105,18 @@ sequenceDiagram
 
 # 4. 在 XC 还原用户看到的进度
 
+## 4.1 AngelFleetConsole 的现有入口与接入点
+
+2026 年 11 月 19 日核对了本地 `main@df715b3` 的控制台源码。Worker 的 `routeRequest` 挂载健康检查、认证、权限目录、组织、角色、账号、租户和审计，现有业务接口使用 `/api/v1`。GA-01 已冻结同源 `/v1/agents/*` 和 `/v1/tenants/{tenantId}/*` 的路径及鉴权，环境域名与云端资源由 GA-02 配置，接口由 GA-03、05、08 实现。[接口契约与样例](go-agent-interface-contract.md) · [当前 API 路由](https://github.com/XCAngelWatch/AngelFleetConsole/blob/df715b38d174b2bdad7a5ab58150c05ead6c5d36/cloudflare/api/src/router.ts#L17)
+
+| 接入位置 | 当前实现 | 节点接入要补的部分 |
+|---|---|---|
+| 页面与授权 | `dashboardPages` 登记现有后台页面，`PERMISSION_CATALOG` 定义菜单和动作，`withPermission` 在提交前刷新服务端身份 | 登记节点详情和任务中心，加入读节点、管理服务等权限。API 对每次查询、提交和重试复核成员、动作与节点归属。[页面](https://github.com/XCAngelWatch/AngelFleetConsole/blob/df715b38d174b2bdad7a5ab58150c05ead6c5d36/src/lib/navigation/dashboard-pages.ts#L10) · [权限目录](https://github.com/XCAngelWatch/AngelFleetConsole/blob/df715b38d174b2bdad7a5ab58150c05ead6c5d36/src/lib/auth/permission-policy.ts#L12) · [提交前复核](https://github.com/XCAngelWatch/AngelFleetConsole/blob/df715b38d174b2bdad7a5ab58150c05ead6c5d36/src/lib/utils/authorized-mutation.ts#L15) |
+| 注册与连接 | Worker 的 `Env` 声明数据库 `DB` 和可选限流 KV，普通 HTTP 响应由 `withCors` 重建 | 接入预登记、注册、连接票据和 AgentConn。WSS Upgrade 须在普通响应包装前分流，用真实 connector 完成 ready 握手。[Worker 环境](https://github.com/XCAngelWatch/AngelFleetConsole/blob/df715b38d174b2bdad7a5ab58150c05ead6c5d36/cloudflare/api/src/env.ts#L34) · [HTTP 响应包装](https://github.com/XCAngelWatch/AngelFleetConsole/blob/df715b38d174b2bdad7a5ab58150c05ead6c5d36/cloudflare/api/src/lib/http.ts#L133) |
+| 命令与审计 | `writeAudit` 先写审计日志再更新日汇总，`buildAuditScopeFilter` 按当前机构筛选 | 命令受理在租户库内原子写入意图、收据、初始审计与 outbox。任务和证据查询另行校验租户与节点范围，以 `commandId` 关联原意图和执行结果。[审计写入](https://github.com/XCAngelWatch/AngelFleetConsole/blob/df715b38d174b2bdad7a5ab58150c05ead6c5d36/cloudflare/api/src/lib/audit.ts#L144) · [审计查询范围](https://github.com/XCAngelWatch/AngelFleetConsole/blob/df715b38d174b2bdad7a5ab58150c05ead6c5d36/cloudflare/api/src/routes/audit.ts#L38) |
+
+## 4.2 目标页面与任务查询
+
 服务详情页和任务中心用不同的键读取数据。详情页查询键包含 `tenantId`、`nodeId`、服务别名和查询参数。任务详情在原租户上下文调用 `GET /v1/tenants/{tenantId}/commands/{commandId}`，展示受理时的节点、服务别名与安装实例；别名后续改绑，同一任务仍可查到原安装 ID。切换节点时取消旧查询和订阅，在回调中再次匹配上下文，防止旧节点的迟到结果覆盖当前详情。
 
 | 用户动作或观测 | 页面行为 |
@@ -207,6 +219,8 @@ flowchart LR
 | 文件存在，但缺少原命令绑定或关闭时的凭据，成员、长度或摘要冲突，或任务中断后尚无法归因 | 保留原记录并进入 `UNCERTAIN`，只读补证。事后对同一文件计算两次摘要仍无法证明它属于原命令 |
 | 本地归档已核实，R2 制品仍在上传或校验中 | 分别记录本地完成和云端进度。云端交付以原 `artifactId` 达到 `READY` 为准 |
 
+**恢复另行验收。** `BackupService.WebsiteRecover` 按别名定位目标站点，对 `handleWebsiteRecover` 返回的错误只写日志。独立恢复由后台任务执行，涉及回滚备份、站点配置、数据解包和服务重载。P5 在隔离目标上记录恢复前状态、制品摘要和任务 ID，再通过控制台按原 `commandId` 核对任务、恢复后的配置和文件样本、适用的数据库样本及站点可访问性。另在切换阶段中断，按 checkpoint 核对实际恢复或回滚的状态，证据不足时保留待核对。对应 AC-RECOVERY、FI-RECOVERY。[恢复入口与回滚备份](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/service/backup_website.go#L64-L99) · [恢复收尾与异步执行](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/app/service/backup_website.go#L180-L220)
+
 # 8. 云端与节点的实施契约
 
 ## 8.1 把接口接到持久化边界
@@ -223,9 +237,9 @@ flowchart LR
 
 ## 8.2 实施工序与联调判定
 
-1. **固定输入。** P0 固定 Go 源码、XC 客户端版本和 operation 映射，记录测试节点的 1Panel、容器及适配器版本。先通过只读样本核对租户隔离、时间单位和错误表达，再开放写入。
+1. **完成首次可信采样。** P0 固定 Go、Console、operation 映射和接口版本。到 P2，真实 Linux 节点须完成注册和 ready，由该节点的适配器调用第 7.2 节的 Go 入口，回传绑定节点身份、采样时间和有效性的 CPU、内存读数。测试人员用同一采样的原始字段核对控制台显示值，断开节点后再核对最后成功时间和 stale 标志。保留注册记录、连接代次、原始样本与页面读数，按 DEV02、AC-HOST、FI-HOST 验收。
 2. **接入一次重启。** 用可追踪的测试实例复核成功路径，在启动已发生、回执未落盘的位置中断 connector。以本地操作标记和启动证据证明动作次数；无法归因时应保留未知状态。对应 AC-CMD、FI-CMD、AC-APP。
 3. **验证一次本地网站备份。** 由测试适配器发起创建，按 AC-APP 核对本地 PHP 和受管 runtime 样本的预期成员。卡在任务成功、业务记录写回前，恢复时按 AC-FILE 复算归档长度与摘要。按 FI-CMD 比较对账前后同一命令发起备份的次数，应无新增调用。原任务内部重试单列。还原能力另取隔离目标按 AC-RECOVERY 实测。
 4. **切换和回退。** 按节点与能力开启适配。回退时停止该能力的新命令，保留已受理任务的对账和撤权检查。将 journal、租户事件、资源版本和归档摘要归入同一次联调记录，容量验收沿用独立门禁。
 
-[工程实施与联调工作页](https://github.com/XCAngelWatch/AngelFleetPRD/blob/main/docs/spaces/implementation-review.md)列出各工作包的输入、断点与通过条件，供节点、控制面和前端工程师共同验收。
+Console 的 `pnpm test:e2e` 可用 Mock 验证页面状态、切换及迟到响应。`pnpm test:e2e:local` 连接本地 API 和磁盘 SQLite，现有用例核对账号权限、撤权和审计。节点接口实现后可在本地层补作用域与持久化回归。注册后的节点身份、WSS 连接、Go 调用次数、归档或还原后的数据需由真实 Linux 联调记录证明。[Mock 测试入口](https://github.com/XCAngelWatch/AngelFleetConsole/blob/df715b38d174b2bdad7a5ab58150c05ead6c5d36/tests/e2e/helpers/mock-api.ts) · [本地真实后端用例](https://github.com/XCAngelWatch/AngelFleetConsole/blob/df715b38d174b2bdad7a5ab58150c05ead6c5d36/tests/local/real-backend.spec.ts) · [工程实施与联调工作页](https://github.com/XCAngelWatch/AngelFleetPRD/blob/main/docs/spaces/implementation-review.md)

@@ -52,10 +52,9 @@ searchInput.addEventListener('input', () => {
     const hit = record.text.toLowerCase().indexOf(needle);
     const start = Math.max(0, hit - 40);
     const preview = (start ? '…' : '') + record.text.slice(start, start + 145) + (record.text.length > start + 145 ? '…' : '');
-    const pageLabel = record.page === 'technical-design.html' ? '技术详细设计' : '技术方案';
     const path = record.page === document.body.dataset.page ? '' : record.page;
     const href = escapeHtml(`${path}#${record.id}`);
-    return `<li><a href="${href}"><span class="result-page">${pageLabel}</span><span class="result-title">${highlight(record.title,query)}</span><span class="result-preview">${highlight(preview,query)}</span></a></li>`;
+    return `<li><a href="${href}"><span class="result-page">${escapeHtml(record.label ?? record.page)}</span><span class="result-title">${highlight(record.title,query)}</span><span class="result-preview">${highlight(preview,query)}</span></a></li>`;
   }).join('');
 });
 results.addEventListener('click', event => { if (event.target.closest('a')) dialog.close(); });

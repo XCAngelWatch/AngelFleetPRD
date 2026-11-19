@@ -12,7 +12,9 @@
 
 - [完整技术方案](docs/technical-plan.md) 是内容源文件。
 - [技术详细设计](docs/technical-design.md) 从 1Panel 的前端、core 和 agent 源码追踪实际调用链，说明 XC 控制台与 Cloudflare 控制面如何读取节点数据、受理命令并核对执行结果。
-- [工程协作与实施评审](docs/spaces/implementation-review.md) 是协作页的 GitHub 版本，供开发与测试按工作包核对改造入口、验收条件和待补证据。
+- [Go Agent 研发计划](docs/go-agent-development-plan.md) 列出首批可派工任务、P0–P6 依赖和验收标准，首个里程碑是控制台展示真实 Linux 节点的首次可信采样。
+- [GA-01 节点接口契约](https://xcangelwatch.github.io/AngelFleetPRD/go-agent-interface-contract.html) 给出 Go 源码仓库和目录分工、节点注册、建连及首次采样的接口，附[可下载的联调样例](docs/examples/go-agent-first-sample.json)。
+- [工程协作与实施评审](docs/spaces/implementation-review.md) 供开发与测试逐项记录节点注册与采样、实例重启、网站备份与恢复的联调结果。
 - [文档目录](docs/README.md) 说明每个结果文件的职责、权威性和推荐阅读顺序。
 - [Cloudflare 平台约束快照](docs/platform-constraints.md) 集中记录官方限制、抓取日期和 P0 复核规则。
 - [威胁模型](docs/angelfleetprd-threat-model.md) 分开描述当前静态发布链和目标控制面的安全边界。
@@ -22,7 +24,7 @@
 - [站点元数据](docs/site-meta.json) 是站点版本、发布状态和构建元数据的唯一来源。
 - [在线文档站](https://xcangelwatch.github.io/AngelFleetPRD/) 支持章节导航、全文搜索、流程图、打印和 Markdown 下载。
 - 生成结果统一位于 `dist/`：源文档、机器契约、平台约束、威胁模型和 `build-manifest.json` 均由 `npm run build` 生成。
-- 主方案与技术详细设计分别维护在各自的 Markdown 源文件中，运行构建后即可更新阅读页面。
+- 主方案、技术详细设计与节点接口契约各有一个 Markdown 源文件，构建时生成阅读页面和全文搜索索引。
 - 更新方案结论时，应同步更新代码复用输入、验收证据和机器契约；发布网页与实施验收分别核对。
 
 ## 本地构建

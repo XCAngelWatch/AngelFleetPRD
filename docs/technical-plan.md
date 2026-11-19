@@ -1,6 +1,6 @@
 # 1Panel v2 Cloudflare 控制面详细技术方案
 
-复用 XCtechResource 的 React/Next.js 前端工程与 Cloudflare 服务基础，迁移 1Panel v2 的完整运维功能。Go 的容器、网站、数据库、文件、备份及主机执行能力继续复用。首版以 XC React 控制台、Cloudflare 控制面、connector 和原 core/agent 完成功能闭环；原 core 最终退役单列后续阶段。本文聚焦功能范围、代码复用边界、接口协议、数据归属、迁移步骤和验收，不纳入定价与费用模型。
+首版以 AngelFleetConsole 的 React/Next.js 控制台和现有 API 为基础，迁移 1Panel v2 运维功能。本文的「XC React」指这套控制台。节点继续运行原 Go core/agent，新增独立 connector 接入 Cloudflare。首个联调里程碑是在控制台看到已注册 Linux 节点的第一份可信采样。Go core 退役单列 P6。[Go Agent 研发计划](go-agent-development-plan.md)
 
 **设计版本 2.4 · 实施状态：实施设计，待 P0–P6 分阶段验收**
 
@@ -72,6 +72,8 @@ flowchart LR
 | Cloudflare 限制与容量怎么验收 | §15.1、§15.3.5 | [`docs/platform-constraints.md`](platform-constraints.md) 与官方链接 |
 | 注册、授权、命令、终端和文件协议怎么实现 | 附录 A | A.2–A.12；状态边统一以 [`docs/command-state.json`](command-state.json) 为准 |
 | Go/1Panel 现有功能如何迁移 | §13 | 附录 B 与 [`docs/operation-ledger.md`](operation-ledger.md) |
+| 本地 Go 服务接入先派哪些任务，怎样验收 | §14 | [Go Agent 研发计划](go-agent-development-plan.md) 的任务依赖、工作量与实机验收 |
+| 节点仓库与目录、注册与握手的线格式 | [GA-01 接口契约](go-agent-interface-contract.md) | [同一节点的完整请求、消息和异常样例](examples/go-agent-first-sample.json) |
 | 数据表、操作和错误码如何落地 | 附录 C | C.1–C.3；构建检查负责字段和台账一致性 |
 | 产品需求、生命周期和验收如何追踪 | 附录 D | D.1–D.5 与 [`docs/acceptance-ids.json`](acceptance-ids.json) |
 | OTA/Yocto 是否进入首版 | 附录 E | E.1–E.4，默认是候选扩展 |
@@ -420,7 +422,7 @@ P0 必须冻结组件级 RPO/RTO，而不是只给控制 API 一个恢复时间�
 
 # 13. XC 前端与 Go 完整功能迁移
 
-前端统一使用 XCtechResource 的 React/Next.js 工程。复用其应用壳、视觉组件、账号机构租户页面、权限树、API 客户端、状态管理、国际化与测试组织。1Panel Vue 提供功能与流程参照、DTO、枚举和校验规则，不作为上线业务页面嵌入。源码来源分别为 `XCtechResource` 与 `1Panel` 仓库。
+前端和现有管理 API 的实施仓库为 AngelFleetConsole。在 `df715b3`，React 已有管理页面、权限树和审计查询，API 已注册身份、机构、租户、角色、账号、权限和审计路由。节点域 API、AgentConn 和 Go 执行回执需要开发。1Panel Vue 用于核对业务流程、DTO、枚举和校验规则。[Console 路由](https://github.com/XCAngelWatch/AngelFleetConsole/blob/df715b38d174b2bdad7a5ab58150c05ead6c5d36/cloudflare/api/src/router.ts)
 
 ```mermaid
 flowchart LR
@@ -450,11 +452,11 @@ flowchart LR
 | 数据访问 | API 客户端、React Query、Zustand | 查询键包含 tenantId/nodeId/资源/参数，旧请求与订阅取消 |
 | 任务交互 | 通知与任务展示组件模式 | 非阻塞任务中心，关闭页面后任务继续，刷新后可查 |
 | 实时与传输 | 复用通用 UI 外观 | 新建 React 终端、日志/指标订阅、VM console、可恢复文件组件 |
-| 构建与测试 | 静态前端、Service Binding、测试工程 | 新节点深链接与刷新无需重新构建；真实 API/流契约测试 |
+| 构建与测试 | 静态前端、Playwright Mock、本地 API 与 SQLite 测试宿主 | 验证新节点的深链接和权限，补充 Worker/DO 与 Linux connector 的真实联调 |
 
-XC 当前应用壳和权限菜单可作为基础，但旧 RoleGuard 与权限点模型需要统一。运维任务不能沿用资源包导出的全屏阻塞流程。前端提交操作后记录固定目标节点，允许继续导航；切换节点只影响当前视图，不改变已提交任务的目标。节点本地数字资源 ID 与 nodeId 共同标识资源，不能单独作为云端全局 ID。
+复用 Console 的 `PERMISSION_CATALOG`、`PermissionGuard` 和服务端权限检查，新增节点归属及资源范围。前端提交操作后记录固定目标节点，允许继续导航。切换节点只改变当前视图。节点本地数字资源 ID 与 nodeId 共同标识资源。
 
-认证、WSS 与文件是独立改造项：XC 当前 access/refresh token 存在 sessionStorage；API 的普通 CORS 包装会重建 Response，未保留 WebSocket 字段；现有导出队列在异常后 ACK，文件上传为 S3 整文件 PUT。因此必须分别实现同域会话、Upgrade 分流、可靠命令 outbox 和 R2 multipart/校验，不能用现有 CRUD 或导出测试替代运维验收。对应源码位于 XC 的 `src/lib/utils/token-storage.ts`、`cloudflare/api/src/lib/http.ts`、`cloudflare/api/src/lib/export-jobs.ts`、`cloudflare/api/src/routes/assets.ts`。
+当前浏览器使用 Bearer/sessionStorage，API 普通 CORS 包装会重建 Response。节点接入需单独处理 WSS Upgrade 与 AgentConn 绑定，浏览器同域会话迁移按 §10 实施。当前 API 的数据绑定声明为 DB 和可选的登录限流 KV。可靠命令 outbox、Queues 补偿和 R2 分片校验均作为新工作包估算。[Token 存储](https://github.com/XCAngelWatch/AngelFleetConsole/blob/df715b38d174b2bdad7a5ab58150c05ead6c5d36/src/lib/utils/token-storage.ts) · [HTTP 包装](https://github.com/XCAngelWatch/AngelFleetConsole/blob/df715b38d174b2bdad7a5ab58150c05ead6c5d36/cloudflare/api/src/lib/http.ts) · [API 环境接口](https://github.com/XCAngelWatch/AngelFleetConsole/blob/df715b38d174b2bdad7a5ab58150c05ead6c5d36/cloudflare/api/src/env.ts)
 
 ## 13.2 运维页面与业务功能
 
@@ -535,6 +537,8 @@ disposition,targetStage,workPackageId,acceptanceIds,status,evidenceRefs,gapDecis
 ```
 
 # 14. 迁移路线与任务级工作包
+
+2026-11-19 核对本地源码后，P1 与 P2 的首个联合交付定为注册后首次可信采样。先做可在两租户、两台 Linux 节点复验的只读链路，再开放可能改变主机状态的命令。近期工作按[Go Agent 研发计划](go-agent-development-plan.md)逐项派工，重启、备份和恢复按[操作台账](operation-ledger.md)分别留证。
 
 | 阶段 | 可交付结果 | 依赖与退出条件 |
 |---|---|---|
@@ -744,7 +748,7 @@ CAP-01 以单租户 D1 和每节点 AgentConn 为主要容量风险。平台限�
 | 单条结果内联上限 | 64KiB | 待 PoC | CAP-01 |
 | 命令入场有效期 | 7d | 待 PoC | FI-CMD、CAP-04 |
 | 命令交付重投窗口 | 14d | 待 PoC | FI-CMD、CAP-04 |
-| 策略离线最大窗口 | 待定 | P0 冻结 | DEV08、CAP-04 |
+| 策略离线最大窗口 | 待定 | P0 冻结 | FI-CONFIG、NET-POLICY、CAP-04 |
 
 ### 15.3.7 R10–R12 追踪与兼容边界
 
@@ -793,7 +797,7 @@ DO 通过 Worker 或其他 DO 的 binding 访问。入口 Worker 负责公网认
 
 消费使用带未消费状态与有效期条件的原子更新，同时写入胜出的 consumeRequestId 与 publicKeyHash。D1 中条件 UPDATE 影响零行仍属于成功执行，`batch()` 不会因此自动回滚。节点和审计派生写入必须使用带同一胜出 requestId、公钥摘要与消费状态条件的 `INSERT ... SELECT`，并为节点与注册审计设置唯一键，或采用能够在事务内失败的断言机制。所有派生 SQL 共用同一赢家 guard，批后只检查行数无法撤销已经提交的错误写入。网络丢失响应时，agent 使用原 requestId、公钥及对新鲜单次挑战的签名申请恢复，挑战绑定 enrollment、原请求和公钥摘要。服务端验证私钥持有证明后，核对已提交的赢家记录并返回原结果。知道公钥、requestId 或已消费 ticket 的其他调用方不能据此领取节点凭证。不同请求或不同公钥返回冲突。
 
-建议长期节点密钥只参与挑战签名或短期凭证交换。初版优先评估 Ed25519，落地前验证目标 Go 版本、Workers Web Crypto、兼容日期、密钥导入格式与签名规范的互操作测试，再冻结算法标识。每次建链先取得有效期 5 分钟的连接凭证，绑定 node、tenant、keyVersion、协议版本和用途。已连接 AgentConn 另外维持上限 90 秒的节点授权租约，建议每 30 秒经 TenantData Worker 重验节点状态和 credentialVersion。吊销节点提高版本并持久写 outbox，主动停止投递、断开已有 AgentConn 和关联终端，同时拒绝后续建链与续租。主动通知丢失时，现有授权到期后停用连接。普通 ping 不续授权。轮换采用旧凭证批准新公钥、云端确认、新旧短期重叠、撤销旧版本的流程。私钥仅在 agent 的受限文件中保存。API 返回与日志均省略 ticket、私钥、完整令牌和预签名 URL。[Workers Web Crypto](https://developers.cloudflare.com/workers/runtime-apis/web-crypto/)
+长期节点密钥用于挑战签名或短期凭证交换。GA-01 固定 Ed25519、原始公钥与签名的无填充 base64url 编码。Go 和本地 workerd 已通过样例互验，部署环境仍需核验绑定、兼容日期和真实连接。每次建链先取得有效期 5 分钟的连接凭证，绑定 node、tenant、keyVersion、协议版本和用途。已连接 AgentConn 维持上限 90 秒的节点授权租约，建议每 30 秒经 TenantData 重验节点状态与 credentialVersion。吊销节点时提高版本并持久写 outbox，停止投递、断开已有连接及关联终端并拒绝续租。若通知丢失，授权到期后停止使用连接，普通 ping 不续授权。轮换由旧凭证批准新公钥，云端确认后短时重叠并撤销旧版。私钥只存节点受限文件。注册和建连凭证仅通过专用 HTTPS 发放响应交付，使用 no-store；常规查询和日志省略完整凭证、私钥与预签名 URL。[GA-01 节点注册及建连接口](go-agent-interface-contract.md) · [Workers Web Crypto](https://developers.cloudflare.com/workers/runtime-apis/web-crypto/)
 
 国内接入优先采用 L4 或 CONNECT 转发，保持 agent 到 Cloudflare 的 TLS 会话。若代理终止 TLS，再连接 Cloudflare，则继续以应用层节点挑战和短期连接凭证验证 node。代理身份、来源 IP 与节点身份分别记录。[RFC 9110 CONNECT](https://www.rfc-editor.org/rfc/rfc9110.html#section-9.3.6)
 
@@ -1135,7 +1139,7 @@ R2 对象 key 由服务端生成，包含租户与用途前缀。上传先创建
 
 ## B.1. 基线与验证范围
 
-功能迁移基线固定为 `1Panel-dev/1Panel` 的 `dev-v2` 提交 `cedb8ddda9254bdef0fddba96b7fa59c6ab8c633`；XCtechResource 是前端与 Cloudflare 能力的复用输入。实施前必须把两个仓库都冻结为可构建、可复现的工程快照，并在台账中记录实际提交和工作树摘要。[1Panel 固定提交](https://github.com/1Panel-dev/1Panel/commit/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633)
+全量路由迁移矩阵保留 1Panel `dev-v2@cedb8dd` 的核对范围。本轮在 `aaba86d` 复核启动、采样、OpenResty 重启、网站备份创建与恢复，并核对两次提交间相关实现的差异。早期方案将前端复用来源记为 XCtechResource，当前实施以 `AngelFleetConsole main@df715b3` 的实际路由、权限和测试宿主为准。三个仓库的完整提交、工作树状态及变更影响见[研发计划的源码基线](go-agent-development-plan.md)。[1Panel 矩阵基线](https://github.com/1Panel-dev/1Panel/commit/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633) · [1Panel 本轮核对提交](https://github.com/1Panel-dev/1Panel/commit/aaba86d0ef71a31ee319e74998ffe83c64abf4b6)
 
 迁移矩阵覆盖公开源码注册的 9 个 core 路由组与 25 个 agent 路由组，共 34 组，并包含组外入口和后台生命周期。首版交付为 XC React 控制台、Cloudflare 控制面、connector 与保留的 Go core/agent；managed-agent 和 core 退役单独验收。每个保留能力均需完成页面、权限、执行、失败与恢复的真实节点验证。
 
@@ -1268,21 +1272,21 @@ agent 已有 Docker controller、网站 binding 和 capabilities 探测等 MCP �
 
 ## B.6. XC React 前端复用与接口契约
 
-上线界面统一采用 XCtechResource 的 React/Next.js 工程。复用应用壳、导航、主题、中英文、表格表单、账号机构权限页面、React Query、Zustand、API 客户端和测试结构；1Panel Vue 只作为功能流程、DTO、枚举和校验规则的参照。容器、网站、数据库、终端等运维页面在 XC 组件体系内重新实现。
+上线界面采用 AngelFleetConsole 的应用壳、导航、主题、账号机构权限页面、React Query、Zustand 和 API 客户端。容器、网站、数据库和终端页面按 1Panel Vue 的流程及 Go DTO 在 Console 中实现。
 
 | 契约 | 现有输入 | XC React 迁移要求 |
 |---|---|---|
-| 页面与路由 | XC 静态导出和资源包页面；1Panel Vue 业务页面 | 新建运维领域页面；新节点深链接和刷新不依赖重新构建 |
+| 页面与路由 | Console 静态导出、管理与审计页面，1Panel Vue 业务页面 | 新建运维领域页面，验证新节点深链接和刷新 |
 | 租户与节点 | XC 现有机构上下文；Go CurrentNode、operateNode、local | 新增稳定 tenantId/nodeId；请求、缓存键和订阅均绑定上下文，旧响应不能覆盖新节点 |
 | 身份与会话 | XC access/refresh token 位于 sessionStorage；1Panel 有 Cookie/CSRF 契约 | 复用账号权限 UI，落实目标同域会话及服务端 CSRF/Origin；终端使用独立短期角色票据 |
 | 查询与响应 | Go code/message/data、items/total；业务失败可能为 HTTP 200 | 领域客户端统一解析业务状态与分页，返回采样时间和 stale |
-| 变更任务 | Go 本地 taskId；XC 导出使用全局阻塞流程 | 新增非阻塞任务中心，commandId 绑定原租户节点，页面关闭或刷新后继续追踪 |
+| 变更任务 | Go 部分异步操作使用本地 taskId，Console 已有审计 CSV 导出交互 | 新增非阻塞任务中心，commandId 绑定原租户节点，页面关闭或刷新后继续追踪 |
 | 实时流 | 本机/SSH/container 终端、日志、进程、VM console、脚本流 | 共用会话生命周期，各协议独立适配；租约、撤销、重连、背压与历史缺口可见 |
-| 文件 | Go files/容器文件/ISO/模型/恢复包；XC S3 整文件 PUT | 新增 artifact 分片、续传、取消和校验；下载与匿名分享授权分别迁移 |
-| 权限与能力 | XC 权限点与旧 RoleGuard；Go 社区/企业能力 | 收敛权限点组件，菜单、页面、按钮结合服务端权限和节点 capabilities，后端最终校验 |
+| 文件 | Go files、容器文件、ISO、模型和恢复包 | 新增 artifact 分片、续传、取消和校验，下载与匿名分享分别授权 |
+| 权限与能力 | Console 权限目录、菜单守卫与服务端鉴权，Go 社区/企业 provider | 增加节点与资源范围，后端校验当前授权与节点 capabilities |
 | HTTP 与 WSS | XC API 统一 CORS Response 包装 | Upgrade 请求在 JSON 包装前分流，保留 DO 的 webSocket 响应，真实验证完整链路 |
 
-原 Go 契约参照：[API 客户端](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/frontend/src/api/index.ts)、[响应 DTO](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/frontend/src/api/interface/index.ts)、[业务响应](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/core/app/api/v2/helper/helper.go)、[原终端流程](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/frontend/src/components/terminal/index.vue)。XC 工程对应入口为 `src/components/layout/app-sidebar.tsx`、`src/lib/api/client.ts`、`src/lib/api/query-client.ts`、`src/lib/stores/tenant-store.ts`、`src/lib/utils/token-storage.ts`、`src/components/layout/dashboard-blocking-task-provider.tsx` 和 `cloudflare/api/src/lib/http.ts`。
+原 Go 契约参照：[API 客户端](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/frontend/src/api/index.ts)、[响应 DTO](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/frontend/src/api/interface/index.ts)、[业务响应](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/core/app/api/v2/helper/helper.go)、[原终端流程](https://github.com/1Panel-dev/1Panel/blob/cedb8ddda9254bdef0fddba96b7fa59c6ab8c633/frontend/src/components/terminal/index.vue)。Console 从 `src/lib/stores/auth-store.ts` 读取身份，通过 `src/lib/navigation/dashboard-pages.ts` 注册路由，租户和节点查询键需扩展到 `src/lib/api/`。具体鉴权与 API 入口见[技术详细设计](technical-design.md)。
 
 每个功能的 React 页面、云端 operation 和 Go 执行器一一关联。验收同时覆盖正常路径、权限拒绝、业务失败、断线、取消与恢复，并核对真实节点状态。完成标准是目标能力端到端可用，不是 Vue 页面文件已转换、React 组件已绘制或接口返回 HTTP 200。
 
@@ -1552,11 +1556,13 @@ REQ 是产品追踪编号，不替代附录 B 的路由组和逐端点台账。�
 | DEV01 预登记 | 授权成员创建节点并发放绑定租户、节点的一次性凭证；无需人工二次审批 | 越权、跨租户、过期、撤销与重复消费拒绝；凭证不入日志 | P1–P2 |
 | DEV02 安装注册 | 展示适用安装指引，设备本地产生密钥并证明持有；注册成功显示稳定节点身份 | 注册响应丢失恢复同一结果；不同公钥不得接管；镜像不得预置共享私钥 | P2、P5 |
 | DEV03 首次上线 | 注册后建立连接，展示初始化步骤、采样时间与各项能力 | 重连、旧 epoch 和初始化失败可诊断；心跳不能掩盖探测失败 | P2–P3 |
-| DEV04 身份恢复 | 重复安装保留有效身份与未决账本；重装或克隆按身份恢复流程处理 | SN 不能作为认证凭据；journal 丢失变更 incarnation 并核对旧任务，禁止盲目重放 | P2–P3、P5 |
-| DEV05 档案分组 | 查看型号、架构、版本、归属、节点组和最近状态；节点组影响授权范围 | 同名资源不混同；改组及时撤销旧访问；列表缓存不证明设备在线 | P1–P2、P4 |
-| DEV06 停用轮换 | 停止新命令与会话，撤销终端；密钥轮换保留身份及审计连续性 | 停用后旧任务仅走受限结果对账；凭据吊销后不得继续信任旧钥，须可信恢复或重新认证 | P2–P3 |
+| DEV04 密钥轮换与停用恢复 | 停用时阻断新命令并撤销终端，轮换时保留身份与审计连续性 | 停用后仅允许既有任务受限对账，吊销后须重新证明身份 | P2–P3、P5 |
+| DEV05 节点任务与结果对账 | 在原节点追踪 commandId 与执行记录 | 重连或丢回执后核对原任务，结果不明时保留证据并停止重复副作用 | P2–P3、P5 |
+| DEV06 重装与克隆恢复 | 重复安装保留有效身份与未决账本，重装或克隆走可信恢复流程 | SN 不能作为认证凭据，journal 丢失后变更 incarnation 并核对旧任务 | P2–P3、P5 |
 | DEV07 退役恢复 | 明确退役影响、保留期与数据处置，保护现场数据和未决记录 | 不将已发生操作标成取消；旧快照恢复不能复活已吊销身份或重复执行旧任务 | P5 |
-| DEV08 接入诊断 | 展示注册、网络/TLS、连接、初始化和能力错误，提供对应修复提示 | 断网、时钟或证书异常、存储不可写分别留证；不得以重试覆盖原始失败 | P2–P3、P5 |
+| DEV08 升级、回滚与恢复 | 确认包及版本兼容、升级后健康，失败时回退 | 保留升级前后版本、节点身份与未决账本，旧快照恢复后核查代次和未决命令 | P5 |
+
+设备档案仍展示型号、架构、版本、归属、节点组和最近状态。用 AC-UI、AC-AUTH 核对同名资源隔离与改组撤权。接入诊断沿 DEV02、DEV03、NET-REG、NET-AGENT 核对注册、网络/TLS、时钟、初始化、存储与能力错误，保留首次失败原因。上表编号与[验收注册表](acceptance-ids.json)一致。
 
 停用后，尚可信身份仅可提交既有任务结果及只读核对请求，不允许借此重新获得操作权。吊销身份的节点须通过可信恢复流程重新认证；其旧钥上报不能直接成为任务完成证据。成员移除、节点停用和身份吊销应分别验收，不共用含糊的“禁用”结果。
 

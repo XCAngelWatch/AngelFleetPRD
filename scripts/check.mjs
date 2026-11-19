@@ -6,39 +6,54 @@ const source = await readFile('docs/technical-plan.md','utf8');
 const html = await readFile('dist/index.html','utf8');
 const designSource = await readFile('docs/technical-design.md','utf8');
 const designHtml = await readFile('dist/technical-design.html','utf8');
+const contractSource = await readFile('docs/go-agent-interface-contract.md','utf8');
+const contractHtml = await readFile('dist/go-agent-interface-contract.html','utf8');
 const manifest = JSON.parse(await readFile('dist/build-manifest.json','utf8'));
 const siteMeta = JSON.parse(await readFile('docs/site-meta.json','utf8'));
 const stateDefinition = JSON.parse(await readFile('docs/command-state.json','utf8'));
 const builtStateDefinition = JSON.parse(await readFile('dist/command-state.json','utf8'));
 const acceptanceRegistry = JSON.parse(await readFile('docs/acceptance-ids.json','utf8'));
 const builtAcceptanceRegistry = JSON.parse(await readFile('dist/acceptance-ids.json','utf8'));
-const supportingDocs = ['platform-constraints.md','angelfleetprd-threat-model.md'];
+const sampleFile = 'examples/go-agent-first-sample.json';
+const supportingDocs = ['platform-constraints.md','angelfleetprd-threat-model.md','go-agent-development-plan.md','spaces/implementation-review.md',sampleFile];
+const engineeringDocs = await Promise.all(['go-agent-development-plan.md','spaces/implementation-review.md'].map(file => readFile(`docs/${file}`,'utf8')));
+const markdownSources = [source,designSource,contractSource,...engineeringDocs].join('\n\n');
 const site = 'https://xcangelwatch.github.io/AngelFleetPRD/';
 const pages = [
-  {file:'index.html', html, download:'technical-plan.md', peer:'technical-design.html', canonical:site},
-  {file:'technical-design.html', html:designHtml, download:'technical-design.md', peer:'index.html', canonical:site+'technical-design.html'}
+  {file:'index.html', html, download:'technical-plan.md', canonical:site},
+  {file:'technical-design.html', html:designHtml, download:'technical-design.md', canonical:site+'technical-design.html'},
+  {file:'go-agent-interface-contract.html', html:contractHtml, download:'go-agent-interface-contract.md', canonical:site+'go-agent-interface-contract.html'}
 ];
 function readSearchData(document) {
   return JSON.parse(document.match(/<script id="search-data" type="application\/json">([\s\S]*?)<\/script>/)?.[1] ?? 'null');
 }
 const searchData = readSearchData(html);
 assert(Array.isArray(searchData),'Expected a site-wide search index');
-assert.deepEqual(readSearchData(designHtml),searchData,'Both pages must embed the same search index');
 const bodyChapterCount = (source.match(/^# \d+\./gm) || []).length;
 const appendixCount = (source.match(/^# 附录 [A-E]/gm) || []).length;
 assert.equal(manifest.chapters.length,bodyChapterCount + appendixCount,'Manifest chapter count must follow source headings');
 assert.equal(manifest.bodyChapters,bodyChapterCount,'Manifest body chapter count must follow source headings');
 assert.equal(manifest.appendices,appendixCount,'Manifest appendix count must follow source headings');
 assert.equal(manifest.sourceSha256,createHash('sha256').update(source).digest('hex'),'Build does not match current source');
-assert.equal(manifest.technicalDesign.sourceSha256,createHash('sha256').update(designSource).digest('hex'),'Detailed design build does not match current source');
-const designChapters = [...designSource.matchAll(/^# (\d+\..+)$/gm)].map(match => match[1]);
-assert(designChapters.length > 0,'Detailed design needs chapters');
-assert.deepEqual(manifest.technicalDesign.chapters.map(chapter => chapter.title),designChapters,'Detailed design chapters must follow source headings');
-assert.equal(manifest.technicalDesign.diagrams,(designSource.match(/^```mermaid$/gm) || []).length,'Detailed design diagram count must match its source');
+const otherDocuments = [
+  {file:'technical-design.html',source:designSource,stats:manifest.technicalDesign},
+  {file:'go-agent-interface-contract.html',source:contractSource,stats:manifest.goAgentContract}
+];
+for (const document of otherDocuments) {
+  const chapters = [...document.source.matchAll(/^# (\d+\..+)$/gm)].map(match => match[1]);
+  assert(chapters.length > 0,`Missing chapters in ${document.file}`);
+  assert.deepEqual(document.stats.chapters.map(chapter => chapter.title),chapters,`Chapter mismatch in ${document.file}`);
+  assert.equal(document.stats.sourceSha256,createHash('sha256').update(document.source).digest('hex'),`Outdated build of ${document.file}`);
+  assert.equal(document.stats.diagrams,(document.source.match(/^```mermaid$/gm) || []).length,`Diagram count mismatch in ${document.file}`);
+}
 assert.equal(await readFile('dist/technical-plan.md','utf8'),source,'Download must match repository source');
 assert.equal(await readFile('dist/technical-design.md','utf8'),designSource,'Detailed design download must match repository source');
+assert.equal(await readFile('dist/go-agent-interface-contract.md','utf8'),contractSource,'Go Agent contract download must match repository source');
 assert.equal(await readFile('dist/operation-ledger.md','utf8'),await readFile('docs/operation-ledger.md','utf8'),'Operation ledger download must match repository source');
 for (const document of supportingDocs) assert.equal(await readFile(`dist/${document}`,'utf8'),await readFile(`docs/${document}`,'utf8'),`${document} download must match repository source`);
+const sampleText = await readFile(`dist/${sampleFile}`, 'utf8');
+JSON.parse(sampleText);
+assert(contractHtml.match(/<a\b[^>]*>/g).some(link => link.includes(`href="${sampleFile}"`) && /\bdownload\b/.test(link)),'Contract must link to the downloadable JSON examples');
 assert.deepEqual(builtStateDefinition,stateDefinition,'Command state fixture must match repository source');
 assert.deepEqual(builtAcceptanceRegistry,acceptanceRegistry,'Acceptance ID registry must match repository source');
 assert.equal(await readFile('dist/404.html','utf8'),html,'404 page must use the generated document shell');
@@ -48,6 +63,7 @@ const sitemap = await readFile('dist/sitemap.xml','utf8');
 assert(source.includes(`设计版本 ${siteMeta.version} · 实施状态：实施设计，待 P0–P6 分阶段验收`),'Document header must use site metadata version and final status');
 const pageIds = new Map();
 for (const page of pages) {
+  assert.deepEqual(readSearchData(page.html),searchData,`Site-wide search index mismatch in ${page.file}`);
   const ids = [...page.html.matchAll(/\bid="([^"]+)"/g)].map(match => match[1]);
   const unique = new Set(ids);
   assert.equal(ids.length,unique.size,`Duplicate element IDs in ${page.file}`);
@@ -67,17 +83,20 @@ for (const page of pages) {
       assert(pageIds.get(target).has(decodeURIComponent(url.hash.slice(1))),`Missing anchor in ${page.file}: ${ref}`);
     }
   }
-  assert(linkedFiles.has(page.peer),`Missing navigation from ${page.file} to ${page.peer}`);
+  for (const peer of pages) assert(linkedFiles.has(peer.file),`Missing navigation from ${page.file} to ${peer.file}`);
   for (const path of linkedFiles) await stat(`dist/${path}`);
   const anchors = page.html.match(/<a\b[^>]*>/g) ?? [];
   assert(anchors.some(link => link.includes(`href="${page.download}"`) && /\bdownload\b/.test(link)),`Missing Markdown download on ${page.file}`);
   assert(searchData.some(record => record.page === page.file),`Search is missing ${page.file}`);
 }
-for (const chapter of manifest.technicalDesign.chapters) assert(pageIds.get('technical-design.html').has(chapter.id),`Missing detailed design chapter: ${chapter.title}`);
-const publication = source + designSource + html + designHtml;
+for (const document of otherDocuments) {
+  for (const chapter of document.stats.chapters) assert(pageIds.get(document.file).has(chapter.id),`Missing chapter in ${document.file}: ${chapter.title}`);
+}
+const pageContents = pages.map(page => page.html).join('\n');
+const publication = markdownSources + pageContents + sampleText;
 assert(!/\/Volumes\/|\/Users\/|visualize:|page_c8db|chatgpt\.com\/space/.test(publication),'Private source reference was published');
 assert(!/gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/.test(publication),'Credential-like content detected');
-for (const required of ['XCtechResource','core/agent','72h','UNCERTAIN','REVIEW_REQUIRED','REQ10','REQ11','REQ12','DEV08','CAP-01','NET','maxAuthorizationStaleness','managementMode','max_batch_timeout','参数冻结表','可选系统 OTA']) assert(source.includes(required),`Required topic missing: ${required}`);
+for (const required of ['AngelFleetConsole','core/agent','72h','UNCERTAIN','REVIEW_REQUIRED','REQ10','REQ11','REQ12','DEV08','CAP-01','NET','maxAuthorizationStaleness','managementMode','max_batch_timeout','参数冻结表','可选系统 OTA']) assert(source.includes(required),`Required topic missing: ${required}`);
 assert.equal(manifest.diagrams,manifest.diagramSources,'Manifest diagram count must match Mermaid sources');
 assert(manifest.diagrams >= 8,'Expected the baseline diagrams plus the public flow diagrams');
 assert.equal(manifest.searchRecords,searchData.length,'Search manifest count must match embedded index');
@@ -85,7 +104,7 @@ assert.equal(manifest.acceptanceIds,Object.keys(acceptanceRegistry.ids).length,'
 assert.deepEqual(manifest.supportingDocs,supportingDocs,'Manifest supporting documents must match the publication set');
 for (const record of searchData) {
   assert(pageIds.get(record.page)?.has(record.id),`Search target does not exist: ${record.page}#${record.id}`);
-  assert(record.title && record.text,`Empty search entry: ${record.page}#${record.id}`);
+  assert(record.label && record.title && record.text,`Empty search entry: ${record.page}#${record.id}`);
 }
 const diagramBlocks = [...source.matchAll(/```mermaid\s*\n([\s\S]*?)```/g)].map(match => match[1].trim());
 assert.equal(diagramBlocks.length,manifest.diagramSources,'Every Mermaid source must be counted');
@@ -97,7 +116,7 @@ assert.deepEqual(stateEdges,fixtureEdges,'State diagram must match command-state
 const tableGroups = [];
 let table = [];
 let inFence = false;
-for (const line of (source+'\n\n'+designSource).split('\n')) {
+for (const line of markdownSources.split('\n')) {
   if (/^```/.test(line.trim())) { inFence = !inFence; if (inFence && table.length) { tableGroups.push(table); table=[]; } continue; }
   if (!inFence && /^\s*\|/.test(line)) table.push(line);
   else if (table.length) { tableGroups.push(table); table=[]; }
@@ -135,8 +154,7 @@ assert.equal(new Set(acceptanceIds).size,acceptanceIds.length,'Acceptance ID reg
 const acceptanceIdSet = new Set(acceptanceIds);
 const acceptancePattern = /\b(?:AC|FI|CAP|NET)-[A-Z0-9]+\b|\bP\d+-AC\b|\bDEV\d+\b/g;
 const referencedAcceptanceIds = new Set(source.match(acceptancePattern) || []);
-const designAcceptanceIds = new Set(designSource.match(acceptancePattern) || []);
-for (const id of [...referencedAcceptanceIds,...designAcceptanceIds]) assert(acceptanceIdSet.has(id),`Acceptance ID is not registered: ${id}`);
+for (const id of new Set(markdownSources.match(acceptancePattern) || [])) assert(acceptanceIdSet.has(id),`Acceptance ID is not registered: ${id}`);
 for (const id of acceptanceIds) if (acceptanceRegistry.ids[id].requiredUsage !== false) assert(referencedAcceptanceIds.has(id),`Registered acceptance ID is not referenced: ${id}`);
 const externalUrls = [...source.matchAll(/https:\/\/[^)\s]+/g)].map(match => match[0]);
 assert(externalUrls.length > 100 && externalUrls.every(url => { try { return new URL(url).protocol === 'https:'; } catch { return false; } }),'External references must be valid HTTPS URLs');
@@ -145,5 +163,6 @@ assert(html.includes(manifest.status));
 assert(html.includes(`设计版本 ${manifest.version}`) && html.includes(manifest.status));
 assert(html.includes('property="og:image"') && html.includes('name="twitter:card"'));
 assert(html.includes('lang="zh-CN"'));
-assert(!/(?:href|src)="(?:http:\/\/(?:localhost|127\.0\.0\.1)|\/src\/)/.test(html+designHtml),'Preview-only resource URL was published');
-console.log(`Verified both documents, ${manifest.chapters.length + designChapters.length} chapters, ${searchData.length} search targets, local assets, public references and required scope.`);
+assert(!/(?:href|src)="(?:http:\/\/(?:localhost|127\.0\.0\.1)|\/src\/)/.test(pageContents),'Preview-only resource URL was published');
+const totalChapters = otherDocuments.reduce((count, document) => count + document.stats.chapters.length, manifest.chapters.length);
+console.log(`Verified ${pages.length} documents, ${totalChapters} chapters, ${searchData.length} search targets, local assets, public references and required scope.`);

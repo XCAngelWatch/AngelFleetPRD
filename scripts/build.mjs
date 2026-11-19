@@ -1,5 +1,6 @@
 import { readFile, writeFile, mkdir, rm, copyFile, readdir } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
+import { dirname } from 'node:path';
 import MarkdownIt from 'markdown-it';
 import { build } from 'esbuild';
 
@@ -82,12 +83,15 @@ async function readDocument(markdown, file, label, description) {
   return {markdown, file, label, description, title, source, sourceAnchors, sections, intro, records, diagrams: 0};
 }
 
-const [plan, design] = await Promise.all([
+const documents = await Promise.all([
   readDocument('technical-plan.md', 'index.html', '技术方案', '1Panel v2 Cloudflare 控制面技术方案，涵盖 XC React、Go 功能迁移、节点协议与单租户 1 万节点验收基线。'),
-  readDocument('technical-design.md', 'technical-design.html', '技术详细设计', '对照 1Panel 前端、core 与 agent 的源码入口，说明节点采样、命令执行与结果对账的实现边界，附注册、终端、制品与故障恢复验收场景。')
+  readDocument('technical-design.md', 'technical-design.html', '技术详细设计', '对照 1Panel 前端、core 与 agent 的源码入口，说明节点采样、命令执行与结果对账的实现边界，附注册、终端、制品与故障恢复验收场景。'),
+  readDocument('go-agent-interface-contract.md', 'go-agent-interface-contract.html', '节点契约', 'GA-01 确定 Go Agent 的源码仓库与模块目录，并给出节点注册、建立连接及首次可信采样的 HTTP 与 WSS 联调示例。')
 ]);
-const documents = [plan, design];
-const searchRecords = documents.flatMap(doc => doc.records);
+const [plan, design, contract] = documents;
+const sampleFile = 'examples/go-agent-first-sample.json';
+const supportingDocs = ['platform-constraints.md','angelfleetprd-threat-model.md','go-agent-development-plan.md','spaces/implementation-review.md',sampleFile];
+const searchRecords = documents.flatMap(doc => doc.records.map(record => ({...record, label:doc.label})));
 
 // Keep repository links usable in Markdown and resolve them to the reading pages in HTML.
 md.renderer.rules.link_open = (tokens, index, options, env, self) => {
@@ -99,6 +103,7 @@ md.renderer.rules.link_open = (tokens, index, options, env, self) => {
     if (fragment && !id) throw new Error(`Unknown source heading in ${path}#${fragment}`);
     token.attrSet('href', target.file + (id ? '#' + id : ''));
   }
+  if (path === sampleFile) token.attrSet('download', 'go-agent-first-sample.json');
   return self.renderToken(tokens, index, options);
 };
 
@@ -169,14 +174,18 @@ for (const doc of documents) {
 await writeFile('dist/.nojekyll','');
 await copyFile('src/site.css','dist/assets/site.css');
 await copyFile('docs/operation-ledger.md','dist/operation-ledger.md');
-await copyFile('docs/platform-constraints.md','dist/platform-constraints.md');
-await copyFile('docs/angelfleetprd-threat-model.md','dist/angelfleetprd-threat-model.md');
+for (const document of supportingDocs) {
+  const destination = `dist/${document}`;
+  await mkdir(dirname(destination), {recursive:true});
+  await copyFile(`docs/${document}`, destination);
+}
 await copyFile('docs/command-state.json','dist/command-state.json');
 await copyFile('docs/acceptance-ids.json','dist/acceptance-ids.json');
 await writeFile('dist/assets/favicon.svg','<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="6" fill="#143b40"/><path d="M6 24 16 6l10 18H6Z" fill="none" stroke="#e7f4f4" stroke-width="2"/><path d="M11 18h10M16 18v9" stroke="#e7f4f4" stroke-width="2"/></svg>');
 await writeFile('dist/assets/og-card.svg',`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630"><rect width="1200" height="630" fill="#143b40"/><path d="M110 465 300 135l190 330H110Z" fill="none" stroke="#e7f4f4" stroke-width="18"/><path d="M205 370h190M300 370v110" stroke="#e7f4f4" stroke-width="18" stroke-linecap="round"/><text x="560" y="285" fill="#f4ffff" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','Microsoft YaHei',sans-serif" font-size="64" font-weight="700">AngelFleet PRD</text><text x="560" y="370" fill="#b9d8da" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','Microsoft YaHei',sans-serif" font-size="34">1Panel v2 Cloudflare 控制面 · v${escape(siteMeta.version)}</text><text x="560" y="430" fill="#b9d8da" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','Microsoft YaHei',sans-serif" font-size="24">公开技术方案与分阶段验收基线</text></svg>`);
 await writeFile('dist/robots.txt',`User-agent: *\nAllow: /\nSitemap: ${site}sitemap.xml\n`);
-await writeFile('dist/sitemap.xml',`<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>${site}</loc></url><url><loc>${site}${design.file}</loc></url></urlset>\n`);
+const sitemapEntries = documents.map(doc => `<url><loc>${doc === plan ? site : site + doc.file}</loc></url>`).join('');
+await writeFile('dist/sitemap.xml',`<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${sitemapEntries}</urlset>\n`);
 await copyFile('dist/index.html','dist/404.html');
 const bundle = await build({entryPoints:['src/site.js','src/mermaid.js'],outdir:'dist/assets',bundle:true,splitting:true,format:'esm',minify:true,target:'es2022',legalComments:'linked',chunkNames:'chunks/[name]-[hash]',logLevel:'warning',metafile:true});
 await mkdir('dist/licenses',{recursive:true});
@@ -211,8 +220,9 @@ const manifest = {
   diagramSources: (plan.source.match(/^```mermaid$/gm) || []).length,
   searchRecords: searchRecords.length,
   acceptanceIds: Object.keys(acceptanceIds.ids).length,
-  supportingDocs: ['platform-constraints.md','angelfleetprd-threat-model.md'],
-  technicalDesign: documentStats(design)
+  supportingDocs,
+  technicalDesign: documentStats(design),
+  goAgentContract: documentStats(contract)
 };
 await writeFile('dist/build-manifest.json',JSON.stringify(manifest,null,2)+'\n');
 await removeAppleDoubleFiles('dist');

@@ -1,0 +1,1057 @@
+{
+  "contractVersion": "ga01.v1",
+  "exampleOrigin": "https://control.example.invalid",
+  "conventions": {
+    "clock": "Unix epoch milliseconds in UTC. Numeric fields shown as strings for epochs, sequences and revision counters in WS examples, unless explicitly numeric.",
+    "interpolation": "Replace ${...} transport credentials only in the test environment. Each example request or message is a complete application payload. WebSocket handshake framing headers are supplied by the standard client. No private key, reusable token or active endpoint is included.",
+    "proof": "Raw 32-byte Ed25519 public key, 64-byte signature and proofInput use unpadded base64url. publicKeyHash is sha256:<lowercase hex> over the raw public key. proofInput decodes to the UTF-8 canonical JSON challenge. Use the exact decoded bytes when signing or verifying. The connector checks audience, purpose, request, key, binding and expiry. The verifier uses its stored single-use challenge, validates the signature, checks server time and consumes it once.",
+    "digest": "GA-01 v1 uses RFC 8785 JSON Canonicalization Scheme (JCS) and SHA-256 over its UTF-8 bytes, formatted sha256:<lowercase hex>. digestVectors contains the exact input objects. The fixture checker covers these vectors with ASCII property names, ordinary JSON scalars (including 23.5) and unchanged array order. These vectors cover only a subset of JCS.",
+    "credentials": "Tenant write examples use the target same-origin user session and CSRF token. Device requests use their enrollment or connection credential only. No credentials in URL query strings, event bodies or evidence logs.",
+    "phases": "Each case is an independent branch of the successful scenario. http and websocket list complete wire examples. timeline gives their order; local evidence is fixture metadata, not a wire message."
+  },
+  "http": [
+    {
+      "id": "node.create",
+      "request": {
+        "method": "POST",
+        "path": "/v1/tenants/tenant-a/nodes",
+        "headers": {
+          "Cookie": "af_session=${USER_SESSION}",
+          "Origin": "https://control.example.invalid",
+          "X-CSRF-Token": "${CSRF_TOKEN}",
+          "Idempotency-Key": "pre-node-001",
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "displayName": "lab-linux-a"
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "tenantId": "tenant-a",
+          "nodeId": "node-a",
+          "displayName": "lab-linux-a",
+          "registrationState": "PENDING"
+        }
+      }
+    },
+    {
+      "id": "enrollment.issue",
+      "request": {
+        "method": "POST",
+        "path": "/v1/tenants/tenant-a/enrollments",
+        "headers": {
+          "Cookie": "af_session=${USER_SESSION}",
+          "Origin": "https://control.example.invalid",
+          "X-CSRF-Token": "${CSRF_TOKEN}",
+          "Idempotency-Key": "issue-001",
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "nodeId": "node-a",
+          "profile": "full-server"
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "enrollmentId": "enrollment-001",
+          "nodeId": "node-a",
+          "ticket": "${ENROLLMENT_TICKET}",
+          "expiresAt": 1795047001000
+        }
+      }
+    },
+    {
+      "id": "enroll.challenge",
+      "request": {
+        "method": "POST",
+        "path": "/v1/agents/enroll",
+        "headers": {
+          "Authorization": "Bearer ${ENROLLMENT_TICKET}",
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "phase": "challenge",
+          "enrollmentId": "enrollment-001",
+          "requestId": "enroll-req-001",
+          "publicKey": "6uTEljWfBahG9buIo3WCDT5JdJ88zHaF7U4YECe-8qc",
+          "algorithm": "Ed25519"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "challengeId": "ch-enroll-01",
+          "algorithm": "Ed25519",
+          "expiresAt": 1795046462000,
+          "proofInput": "eyJhdWRpZW5jZSI6Imh0dHBzOi8vY29udHJvbC5leGFtcGxlLmludmFsaWQiLCJjaGFsbGVuZ2VJZCI6ImNoLWVucm9sbC0wMSIsImRvbWFpbiI6ImFuZ2VsZmxlZXQubm9kZS1wcm9vZi52MSIsImVucm9sbG1lbnRJZCI6ImVucm9sbG1lbnQtMDAxIiwiZXhwaXJlc0F0IjoxNzk1MDQ2NDYyMDAwLCJub25jZSI6ImJjT1FPTEdoTEMzeVBsOUVscmt5N2NRaExtV3gyaGsxdzh5TG5jRzd1SlEiLCJwdWJsaWNLZXlIYXNoIjoic2hhMjU2OmRmNTA1MzVjMWVjMjg3M2U5NTQxMzlhNzA4YzY2MjIzYTRkMTIzMTAwMzIxZjJkNTNjM2Y0ODZlOTc5MzYwZmIiLCJwdXJwb3NlIjoiZW5yb2xsIiwicmVxdWVzdElkIjoiZW5yb2xsLXJlcS0wMDEifQ"
+        }
+      }
+    },
+    {
+      "id": "enroll.prove",
+      "request": {
+        "method": "POST",
+        "path": "/v1/agents/enroll",
+        "headers": {
+          "Authorization": "Bearer ${ENROLLMENT_TICKET}",
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "phase": "prove",
+          "enrollmentId": "enrollment-001",
+          "requestId": "enroll-req-001",
+          "publicKey": "6uTEljWfBahG9buIo3WCDT5JdJ88zHaF7U4YECe-8qc",
+          "algorithm": "Ed25519",
+          "challengeId": "ch-enroll-01",
+          "signature": "5YAm3CAkGce5LHXiDzfSAxOx0LTlK0ohhBkgl9dCTghyKgXvRwMpCwVInh24aeS__DxWUb7MHWWZEMjOWhpFBw"
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "tenantId": "tenant-a",
+          "nodeId": "node-a",
+          "nodeIncarnation": "inc-01",
+          "credentialVersion": 1,
+          "keyVersion": 1,
+          "publicKeyHash": "sha256:df50535c1ec2873e954139a708c66223a4d123100321f2d53c3f486e979360fb"
+        }
+      }
+    },
+    {
+      "id": "connect.challenge",
+      "request": {
+        "method": "POST",
+        "path": "/v1/agents/connect-ticket",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "phase": "challenge",
+          "nodeId": "node-a",
+          "nodeIncarnation": "inc-01",
+          "keyVersion": 1,
+          "requestId": "connect-req-001",
+          "protocolVersion": 1
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "challengeId": "ch-connect-01",
+          "algorithm": "Ed25519",
+          "expiresAt": 1795046464000,
+          "proofInput": "eyJhdWRpZW5jZSI6Imh0dHBzOi8vY29udHJvbC5leGFtcGxlLmludmFsaWQiLCJjaGFsbGVuZ2VJZCI6ImNoLWNvbm5lY3QtMDEiLCJkb21haW4iOiJhbmdlbGZsZWV0Lm5vZGUtcHJvb2YudjEiLCJleHBpcmVzQXQiOjE3OTUwNDY0NjQwMDAsImtleVZlcnNpb24iOjEsIm5vZGVJZCI6Im5vZGUtYSIsIm5vZGVJbmNhcm5hdGlvbiI6ImluYy0wMSIsIm5vbmNlIjoiSTBLaFNBTGV5alpURUt4X1pkc0YxUFN5Q1BmYTVBV0xVRzhlSWhfNTZ0dyIsInByb3RvY29sVmVyc2lvbiI6MSwicHVibGljS2V5SGFzaCI6InNoYTI1NjpkZjUwNTM1YzFlYzI4NzNlOTU0MTM5YTcwOGM2NjIyM2E0ZDEyMzEwMDMyMWYyZDUzYzNmNDg2ZTk3OTM2MGZiIiwicHVycG9zZSI6ImNvbm5lY3QiLCJyZXF1ZXN0SWQiOiJjb25uZWN0LXJlcS0wMDEifQ"
+        }
+      }
+    },
+    {
+      "id": "connect.prove",
+      "request": {
+        "method": "POST",
+        "path": "/v1/agents/connect-ticket",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "phase": "prove",
+          "nodeId": "node-a",
+          "nodeIncarnation": "inc-01",
+          "keyVersion": 1,
+          "requestId": "connect-req-001",
+          "protocolVersion": 1,
+          "challengeId": "ch-connect-01",
+          "signature": "izjt_oV5S7uxxwFyYbwrS4QRNAQyEIgJXpjfRPDCe7-Cr_SsOT-sBr3ksCRMJrWlhs5SvhrRqV8EYy-ER9kPCA"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "tenantId": "tenant-a",
+          "nodeId": "node-a",
+          "nodeIncarnation": "inc-01",
+          "protocolVersion": 1,
+          "keyVersion": 1,
+          "connectTicket": "${CONNECT_TICKET}",
+          "expiresAt": 1795046705000
+        }
+      }
+    },
+    {
+      "id": "connect.upgrade",
+      "request": {
+        "method": "GET",
+        "path": "/v1/agents/connect",
+        "headers": {
+          "Authorization": "Bearer ${CONNECT_TICKET}",
+          "Connection": "Upgrade",
+          "Upgrade": "websocket",
+          "Sec-WebSocket-Protocol": "angelfleet.v1"
+        }
+      },
+      "response": {
+        "status": 101,
+        "headers": {
+          "Connection": "Upgrade",
+          "Upgrade": "websocket",
+          "Sec-WebSocket-Protocol": "angelfleet.v1"
+        }
+      }
+    },
+    {
+      "id": "command.create",
+      "request": {
+        "method": "POST",
+        "path": "/v1/tenants/tenant-a/nodes/node-a/commands",
+        "headers": {
+          "Idempotency-Key": "inspect-first-001",
+          "Cookie": "af_session=${USER_SESSION}",
+          "Origin": "https://control.example.invalid",
+          "X-CSRF-Token": "${CSRF_TOKEN}",
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "operation": "node.inspect",
+          "resourceVersion": "1",
+          "payload": {
+            "view": "overview"
+          }
+        }
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "commandId": "cmd-001",
+          "state": "QUEUED",
+          "expiresAt": 1795046468000,
+          "idempotencyReplay": false
+        }
+      }
+    },
+    {
+      "id": "nodes.list",
+      "request": {
+        "method": "GET",
+        "path": "/v1/tenants/tenant-a/nodes",
+        "headers": {
+          "Cookie": "af_session=${USER_SESSION}"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "tenantId": "tenant-a",
+              "nodeId": "node-a",
+              "nodeIncarnation": "inc-01",
+              "displayName": "lab-linux-a",
+              "registrationState": "BOUND",
+              "connectionState": "ONLINE",
+              "connectionEpoch": "1",
+              "resourceVersion": "1",
+              "lastSeenAt": 1795046410000,
+              "sampledAt": 1795046409000,
+              "stale": false,
+              "lastSampleCommandId": "cmd-001"
+            }
+          ],
+          "total": 1
+        }
+      }
+    },
+    {
+      "id": "node.read",
+      "request": {
+        "method": "GET",
+        "path": "/v1/tenants/tenant-a/nodes/node-a",
+        "headers": {
+          "Cookie": "af_session=${USER_SESSION}"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "tenantId": "tenant-a",
+          "nodeId": "node-a",
+          "nodeIncarnation": "inc-01",
+          "displayName": "lab-linux-a",
+          "registrationState": "BOUND",
+          "connectionState": "ONLINE",
+          "connectionEpoch": "1",
+          "resourceVersion": "1",
+          "lastSeenAt": 1795046410000,
+          "sampledAt": 1795046409000,
+          "stale": false,
+          "lastSampleCommandId": "cmd-001"
+        }
+      }
+    },
+    {
+      "id": "command.read",
+      "request": {
+        "method": "GET",
+        "path": "/v1/tenants/tenant-a/commands/cmd-001",
+        "headers": {
+          "Cookie": "af_session=${USER_SESSION}"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "tenantId": "tenant-a",
+          "nodeId": "node-a",
+          "nodeIncarnation": "inc-01",
+          "commandId": "cmd-001",
+          "state": "SUCCEEDED",
+          "revision": "5",
+          "operation": "node.inspect",
+          "intentHash": "sha256:43ef058831f3ca1a9d33940f2a5830b0641357d74681e0b264a401b0757ac533",
+          "result": {
+            "sampledAt": 1795046409000,
+            "metrics": {
+              "cpuUsedPercent": {
+                "value": 23.5,
+                "unit": "percent",
+                "sampledAt": 1795046409000,
+                "valid": true,
+                "stale": false
+              },
+              "memoryUsedBytes": {
+                "value": 1073741824,
+                "unit": "bytes",
+                "sampledAt": 1795046409000,
+                "valid": true,
+                "stale": false
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "websocket": [
+    {
+      "id": "hello",
+      "direction": "connector → AgentConn",
+      "message": {
+        "version": 1,
+        "type": "hello",
+        "messageId": "msg-hello",
+        "tenantId": "tenant-a",
+        "nodeId": "node-a",
+        "nodeIncarnation": "inc-01",
+        "highestEpoch": "0",
+        "protocolMin": 1,
+        "protocolMax": 1,
+        "connectorBuild": "fixture.1",
+        "adapterVersion": "1",
+        "executionMode": "core-agent",
+        "coreVersion": "fixture-core",
+        "agentVersion": "fixture-agent",
+        "journalSchema": 1,
+        "capabilities": [
+          "node.inspect"
+        ]
+      }
+    },
+    {
+      "id": "welcome",
+      "direction": "AgentConn → connector",
+      "message": {
+        "version": 1,
+        "type": "welcome",
+        "messageId": "msg-welcome",
+        "tenantId": "tenant-a",
+        "nodeId": "node-a",
+        "nodeIncarnation": "inc-01",
+        "connectionEpoch": "1",
+        "sequence": "1",
+        "protocolVersion": 1
+      }
+    },
+    {
+      "id": "ready",
+      "direction": "connector → AgentConn",
+      "message": {
+        "version": 1,
+        "type": "ready",
+        "messageId": "msg-ready",
+        "tenantId": "tenant-a",
+        "nodeId": "node-a",
+        "nodeIncarnation": "inc-01",
+        "connectionEpoch": "1",
+        "sequence": "1"
+      }
+    },
+    {
+      "id": "ready.ack",
+      "direction": "AgentConn → connector",
+      "message": {
+        "version": 1,
+        "type": "ready.ack",
+        "messageId": "msg-ready-ack",
+        "tenantId": "tenant-a",
+        "nodeId": "node-a",
+        "nodeIncarnation": "inc-01",
+        "connectionEpoch": "1",
+        "sequence": "2"
+      }
+    },
+    {
+      "id": "command.dispatch",
+      "direction": "AgentConn → connector",
+      "message": {
+        "version": 1,
+        "type": "command.dispatch",
+        "messageId": "msg-command-dispatch",
+        "tenantId": "tenant-a",
+        "nodeId": "node-a",
+        "nodeIncarnation": "inc-01",
+        "connectionEpoch": "1",
+        "sequence": "3",
+        "commandId": "cmd-001",
+        "issuedAt": 1795046408000,
+        "expiresAt": 1795046468000,
+        "operation": "node.inspect",
+        "resourceVersion": "1",
+        "payload": {
+          "view": "overview"
+        },
+        "intentHash": "sha256:43ef058831f3ca1a9d33940f2a5830b0641357d74681e0b264a401b0757ac533",
+        "fenceVersion": "1",
+        "traceId": "trace-first-sample"
+      }
+    },
+    {
+      "id": "command.accepted",
+      "direction": "connector → AgentConn",
+      "message": {
+        "version": 1,
+        "type": "command.accepted",
+        "messageId": "msg-command-accepted",
+        "tenantId": "tenant-a",
+        "nodeId": "node-a",
+        "nodeIncarnation": "inc-01",
+        "connectionEpoch": "1",
+        "sequence": "2",
+        "commandId": "cmd-001",
+        "eventId": "event-001",
+        "agentEventSequence": "1",
+        "state": "RECEIVED",
+        "intentHash": "sha256:43ef058831f3ca1a9d33940f2a5830b0641357d74681e0b264a401b0757ac533",
+        "contentHash": "sha256:82a319316e1b9a7ad3fa7b21f0f587e73e7477b2575cef84969be9f80f9a7c8a",
+        "traceId": "trace-first-sample"
+      }
+    },
+    {
+      "id": "command.started",
+      "direction": "connector → AgentConn",
+      "message": {
+        "version": 1,
+        "type": "command.started",
+        "messageId": "msg-command-started",
+        "tenantId": "tenant-a",
+        "nodeId": "node-a",
+        "nodeIncarnation": "inc-01",
+        "connectionEpoch": "1",
+        "sequence": "3",
+        "commandId": "cmd-001",
+        "eventId": "event-002",
+        "agentEventSequence": "2",
+        "state": "RUNNING",
+        "intentHash": "sha256:43ef058831f3ca1a9d33940f2a5830b0641357d74681e0b264a401b0757ac533",
+        "contentHash": "sha256:1cdfe83e146baa9312a1dd91a5d3f75810dd34db752c4df04c88ad9e1b2e4e1c",
+        "traceId": "trace-first-sample"
+      }
+    },
+    {
+      "id": "command.result",
+      "direction": "connector → AgentConn",
+      "message": {
+        "version": 1,
+        "type": "command.result",
+        "messageId": "msg-command-result",
+        "tenantId": "tenant-a",
+        "nodeId": "node-a",
+        "nodeIncarnation": "inc-01",
+        "connectionEpoch": "1",
+        "sequence": "4",
+        "commandId": "cmd-001",
+        "eventId": "event-003",
+        "agentEventSequence": "3",
+        "state": "SUCCEEDED",
+        "intentHash": "sha256:43ef058831f3ca1a9d33940f2a5830b0641357d74681e0b264a401b0757ac533",
+        "result": {
+          "sampledAt": 1795046409000,
+          "metrics": {
+            "cpuUsedPercent": {
+              "value": 23.5,
+              "unit": "percent",
+              "sampledAt": 1795046409000,
+              "valid": true,
+              "stale": false
+            },
+            "memoryUsedBytes": {
+              "value": 1073741824,
+              "unit": "bytes",
+              "sampledAt": 1795046409000,
+              "valid": true,
+              "stale": false
+            }
+          }
+        },
+        "contentHash": "sha256:f41a87d89dbc52b646a95ad83ebadda637c925b6ad01d0db78479ba6010d0ab9",
+        "traceId": "trace-first-sample"
+      }
+    },
+    {
+      "id": "result.received",
+      "direction": "AgentConn → connector",
+      "message": {
+        "version": 1,
+        "type": "result.received",
+        "messageId": "msg-result-received",
+        "tenantId": "tenant-a",
+        "nodeId": "node-a",
+        "nodeIncarnation": "inc-01",
+        "connectionEpoch": "1",
+        "sequence": "4",
+        "commandId": "cmd-001",
+        "eventId": "event-003",
+        "agentEventSequence": "3",
+        "contentHash": "sha256:f41a87d89dbc52b646a95ad83ebadda637c925b6ad01d0db78479ba6010d0ab9"
+      }
+    },
+    {
+      "id": "result.committed",
+      "direction": "AgentConn → connector",
+      "message": {
+        "version": 1,
+        "type": "result.committed",
+        "messageId": "msg-result-committed",
+        "tenantId": "tenant-a",
+        "nodeId": "node-a",
+        "nodeIncarnation": "inc-01",
+        "connectionEpoch": "1",
+        "sequence": "5",
+        "commandId": "cmd-001",
+        "eventId": "event-003",
+        "agentEventSequence": "3",
+        "contentHash": "sha256:f41a87d89dbc52b646a95ad83ebadda637c925b6ad01d0db78479ba6010d0ab9",
+        "applyState": "APPLIED",
+        "appliedRevision": "5"
+      }
+    }
+  ],
+  "timeline": [
+    "node.create",
+    "enrollment.issue",
+    "enroll.challenge",
+    "enroll.prove",
+    "connect.challenge",
+    "connect.prove",
+    "connect.upgrade",
+    "hello",
+    "welcome",
+    "ready",
+    "ready.ack",
+    "command.create",
+    "command.dispatch",
+    "command.accepted",
+    "command.started",
+    "localObservation",
+    "command.result",
+    "result.received",
+    "result.committed",
+    "nodes.list",
+    "node.read",
+    "command.read"
+  ],
+  "localObservation": {
+    "transport": "Unix socket",
+    "socket": "/etc/1panel/agent.sock",
+    "request": {
+      "method": "GET",
+      "path": "/api/v2/dashboard/current/node"
+    },
+    "sourceProjection": {
+      "cpuUsedPercent": 23.5,
+      "memoryUsed": 1073741824
+    },
+    "adapterEvidence": {
+      "commandId": "cmd-001",
+      "tenantId": "tenant-a",
+      "nodeId": "node-a",
+      "nodeIncarnation": "inc-01",
+      "sampledAt": 1795046409000,
+      "validity": {
+        "cpuUsedPercent": true,
+        "memoryUsed": true
+      }
+    },
+    "note": "sourceProjection selects two fields of the existing Go DTO. Source validity and sampledAt must come from the GA-07 collection point."
+  },
+  "digestVectors": {
+    "intent": {
+      "input": {
+        "tenantId": "tenant-a",
+        "nodeId": "node-a",
+        "nodeIncarnation": "inc-01",
+        "operation": "node.inspect",
+        "resourceVersion": "1",
+        "payload": {
+          "view": "overview"
+        },
+        "expiresAt": 1795046468000
+      },
+      "hash": "sha256:43ef058831f3ca1a9d33940f2a5830b0641357d74681e0b264a401b0757ac533"
+    },
+    "event1": {
+      "input": {
+        "tenantId": "tenant-a",
+        "nodeId": "node-a",
+        "nodeIncarnation": "inc-01",
+        "commandId": "cmd-001",
+        "eventId": "event-001",
+        "agentEventSequence": "1",
+        "state": "RECEIVED",
+        "intentHash": "sha256:43ef058831f3ca1a9d33940f2a5830b0641357d74681e0b264a401b0757ac533"
+      },
+      "hash": "sha256:82a319316e1b9a7ad3fa7b21f0f587e73e7477b2575cef84969be9f80f9a7c8a"
+    },
+    "event2": {
+      "input": {
+        "tenantId": "tenant-a",
+        "nodeId": "node-a",
+        "nodeIncarnation": "inc-01",
+        "commandId": "cmd-001",
+        "eventId": "event-002",
+        "agentEventSequence": "2",
+        "state": "RUNNING",
+        "intentHash": "sha256:43ef058831f3ca1a9d33940f2a5830b0641357d74681e0b264a401b0757ac533"
+      },
+      "hash": "sha256:1cdfe83e146baa9312a1dd91a5d3f75810dd34db752c4df04c88ad9e1b2e4e1c"
+    },
+    "event3": {
+      "input": {
+        "tenantId": "tenant-a",
+        "nodeId": "node-a",
+        "nodeIncarnation": "inc-01",
+        "commandId": "cmd-001",
+        "eventId": "event-003",
+        "agentEventSequence": "3",
+        "state": "SUCCEEDED",
+        "intentHash": "sha256:43ef058831f3ca1a9d33940f2a5830b0641357d74681e0b264a401b0757ac533",
+        "result": {
+          "sampledAt": 1795046409000,
+          "metrics": {
+            "cpuUsedPercent": {
+              "value": 23.5,
+              "unit": "percent",
+              "sampledAt": 1795046409000,
+              "valid": true,
+              "stale": false
+            },
+            "memoryUsedBytes": {
+              "value": 1073741824,
+              "unit": "bytes",
+              "sampledAt": 1795046409000,
+              "valid": true,
+              "stale": false
+            }
+          }
+        }
+      },
+      "hash": "sha256:f41a87d89dbc52b646a95ad83ebadda637c925b6ad01d0db78479ba6010d0ab9"
+    }
+  },
+  "cases": [
+    {
+      "id": "recover-lost-enroll-response",
+      "after": "enroll.prove",
+      "exchanges": [
+        {
+          "request": {
+            "method": "POST",
+            "path": "/v1/agents/enroll",
+            "headers": {
+              "Authorization": "Bearer ${ENROLLMENT_TICKET}",
+              "Content-Type": "application/json"
+            },
+            "body": {
+              "phase": "challenge",
+              "enrollmentId": "enrollment-001",
+              "requestId": "enroll-req-001",
+              "publicKey": "6uTEljWfBahG9buIo3WCDT5JdJ88zHaF7U4YECe-8qc",
+              "algorithm": "Ed25519"
+            }
+          },
+          "response": {
+            "status": 200,
+            "headers": {
+              "Content-Type": "application/json"
+            },
+            "body": {
+              "challengeId": "ch-enroll-02",
+              "algorithm": "Ed25519",
+              "expiresAt": 1795046465000,
+              "proofInput": "eyJhdWRpZW5jZSI6Imh0dHBzOi8vY29udHJvbC5leGFtcGxlLmludmFsaWQiLCJjaGFsbGVuZ2VJZCI6ImNoLWVucm9sbC0wMiIsImRvbWFpbiI6ImFuZ2VsZmxlZXQubm9kZS1wcm9vZi52MSIsImVucm9sbG1lbnRJZCI6ImVucm9sbG1lbnQtMDAxIiwiZXhwaXJlc0F0IjoxNzk1MDQ2NDY1MDAwLCJub25jZSI6InNJZVF2eElkQlUxUUhERGpJWkQtTFk5bGcwaHM1N3BzNDEtaXZvZ1pXUG8iLCJwdWJsaWNLZXlIYXNoIjoic2hhMjU2OmRmNTA1MzVjMWVjMjg3M2U5NTQxMzlhNzA4YzY2MjIzYTRkMTIzMTAwMzIxZjJkNTNjM2Y0ODZlOTc5MzYwZmIiLCJwdXJwb3NlIjoiZW5yb2xsIiwicmVxdWVzdElkIjoiZW5yb2xsLXJlcS0wMDEifQ"
+            }
+          }
+        },
+        {
+          "request": {
+            "method": "POST",
+            "path": "/v1/agents/enroll",
+            "headers": {
+              "Authorization": "Bearer ${ENROLLMENT_TICKET}",
+              "Content-Type": "application/json"
+            },
+            "body": {
+              "phase": "prove",
+              "enrollmentId": "enrollment-001",
+              "requestId": "enroll-req-001",
+              "publicKey": "6uTEljWfBahG9buIo3WCDT5JdJ88zHaF7U4YECe-8qc",
+              "algorithm": "Ed25519",
+              "challengeId": "ch-enroll-02",
+              "signature": "uyONRAZ_hreDjQb8jTe45NWmlxdv0rPo1B87Dwjdmt2IV7x1J82HE3TmtbfT95Tjc-UKapufdrHAbpU3b1heAg"
+            }
+          },
+          "response": {
+            "status": 200,
+            "headers": {
+              "Content-Type": "application/json"
+            },
+            "body": {
+              "tenantId": "tenant-a",
+              "nodeId": "node-a",
+              "nodeIncarnation": "inc-01",
+              "credentialVersion": 1,
+              "keyVersion": 1,
+              "publicKeyHash": "sha256:df50535c1ec2873e954139a708c66223a4d123100321f2d53c3f486e979360fb"
+            }
+          }
+        }
+      ],
+      "assert": {
+        "newBindings": 0,
+        "newSuccessAudits": 0
+      }
+    },
+    {
+      "id": "expired-enrollment",
+      "after": "enrollment.issue",
+      "request": {
+        "method": "POST",
+        "path": "/v1/agents/enroll",
+        "headers": {
+          "Authorization": "Bearer ${ENROLLMENT_TICKET}",
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "phase": "challenge",
+          "enrollmentId": "enrollment-001",
+          "requestId": "enroll-req-001",
+          "publicKey": "6uTEljWfBahG9buIo3WCDT5JdJ88zHaF7U4YECe-8qc",
+          "algorithm": "Ed25519"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "errorCode": "AUTH_EXPIRED",
+          "traceId": "trace-failure"
+        }
+      },
+      "assert": {
+        "newBindings": 0
+      }
+    },
+    {
+      "id": "conflicting-enrollment",
+      "after": "enroll.prove",
+      "precondition": "A valid holder proves a new challenge with a different requestId after the winning enrollment.",
+      "response": {
+        "status": 409,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "errorCode": "ENROLLMENT_CONFLICT",
+          "traceId": "trace-failure"
+        }
+      },
+      "assert": {
+        "newBindings": 0,
+        "newSuccessAudits": 0
+      }
+    },
+    {
+      "id": "stale-epoch",
+      "after": "welcome",
+      "precondition": "A second authenticated connection was assigned epoch 2; the first socket delivers its old ready.",
+      "input": {
+        "version": 1,
+        "type": "ready",
+        "messageId": "msg-ready",
+        "tenantId": "tenant-a",
+        "nodeId": "node-a",
+        "nodeIncarnation": "inc-01",
+        "connectionEpoch": "1",
+        "sequence": "1"
+      },
+      "output": {
+        "webSocketCloseCode": 1008,
+        "reason": "STALE_EPOCH"
+      },
+      "assert": {
+        "oldSocketDispatches": 0,
+        "highestEpoch": "2"
+      }
+    },
+    {
+      "id": "replay-command",
+      "after": "command.create",
+      "request": {
+        "method": "POST",
+        "path": "/v1/tenants/tenant-a/nodes/node-a/commands",
+        "headers": {
+          "Idempotency-Key": "inspect-first-001",
+          "Cookie": "af_session=${USER_SESSION}",
+          "Origin": "https://control.example.invalid",
+          "X-CSRF-Token": "${CSRF_TOKEN}",
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "operation": "node.inspect",
+          "resourceVersion": "1",
+          "payload": {
+            "view": "overview"
+          }
+        }
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "commandId": "cmd-001",
+          "state": "QUEUED",
+          "expiresAt": 1795046468000,
+          "idempotencyReplay": true
+        }
+      },
+      "assert": {
+        "additionalCommands": 0
+      }
+    },
+    {
+      "id": "command-key-mismatch",
+      "after": "command.create",
+      "request": {
+        "method": "POST",
+        "path": "/v1/tenants/tenant-a/nodes/node-a/commands",
+        "headers": {
+          "Idempotency-Key": "inspect-first-001",
+          "Cookie": "af_session=${USER_SESSION}",
+          "Origin": "https://control.example.invalid",
+          "X-CSRF-Token": "${CSRF_TOKEN}",
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "operation": "node.inspect",
+          "resourceVersion": "2",
+          "payload": {
+            "view": "overview"
+          }
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "errorCode": "IDEMPOTENCY_REQUEST_MISMATCH",
+          "traceId": "trace-failure"
+        }
+      },
+      "assert": {
+        "additionalCommands": 0
+      }
+    },
+    {
+      "id": "unauthorized-node",
+      "after": "command.read",
+      "precondition": "Authenticated principal has tenant-b membership only.",
+      "request": {
+        "method": "GET",
+        "path": "/v1/tenants/tenant-a/commands/cmd-001",
+        "headers": {
+          "Cookie": "af_session=${USER_B_SESSION}"
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "errorCode": "NODE_FORBIDDEN",
+          "traceId": "trace-failure"
+        }
+      },
+      "assert": {
+        "sampleReturned": false
+      }
+    },
+    {
+      "id": "await-d1-commit",
+      "after": "result.received",
+      "precondition": "D1 merge is pending when the socket closes.",
+      "assert": {
+        "sendResultCommitted": false,
+        "keepLocalResult": true,
+        "resendIdentity": {
+          "commandId": "cmd-001",
+          "eventId": "event-003",
+          "agentEventSequence": "3",
+          "contentHash": "sha256:f41a87d89dbc52b646a95ad83ebadda637c925b6ad01d0db78479ba6010d0ab9"
+        }
+      },
+      "onReconnect": "Resend the same event on the current epoch after ready; confirm after APPLIED or evidence-matched CONSISTENT_NOOP with an appliedRevision."
+    },
+    {
+      "id": "offline-after-good-sample",
+      "after": "command.read",
+      "request": {
+        "method": "GET",
+        "path": "/v1/tenants/tenant-a/nodes/node-a",
+        "headers": {
+          "Cookie": "af_session=${USER_SESSION}"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "tenantId": "tenant-a",
+          "nodeId": "node-a",
+          "nodeIncarnation": "inc-01",
+          "displayName": "lab-linux-a",
+          "registrationState": "BOUND",
+          "connectionState": "OFFLINE",
+          "connectionEpoch": "1",
+          "resourceVersion": "1",
+          "lastSeenAt": 1795046410000,
+          "sampledAt": 1795046409000,
+          "stale": true,
+          "lastSampleCommandId": "cmd-001"
+        }
+      },
+      "assert": {
+        "sampledAtUnchanged": true,
+        "lastSampleCommandId": "cmd-001"
+      },
+      "display": {
+        "cpuUsedPercent": {
+          "value": 23.5,
+          "unit": "percent",
+          "sampledAt": 1795046409000,
+          "valid": true,
+          "stale": true
+        },
+        "memoryUsedBytes": {
+          "value": 1073741824,
+          "unit": "bytes",
+          "sampledAt": 1795046409000,
+          "valid": true,
+          "stale": true
+        }
+      }
+    },
+    {
+      "id": "partial-collection",
+      "after": "command.read",
+      "precondition": "A later collection at attemptedAt can read CPU but fails its memory probe. The preceding memory sample was valid.",
+      "attemptedAt": 1795046420000,
+      "display": {
+        "cpuUsedPercent": {
+          "value": 0,
+          "unit": "percent",
+          "sampledAt": 1795046420000,
+          "valid": true,
+          "stale": false
+        },
+        "memoryUsedBytes": {
+          "value": 1073741824,
+          "unit": "bytes",
+          "sampledAt": 1795046409000,
+          "valid": false,
+          "stale": true,
+          "errorCode": "COLLECTION_FAILED"
+        }
+      }
+    },
+    {
+      "id": "no-prior-sample",
+      "after": "ready.ack",
+      "precondition": "The first memory probe fails and the node has no last-good memory sample.",
+      "display": {
+        "memoryUsedBytes": {
+          "value": null,
+          "unit": "bytes",
+          "sampledAt": null,
+          "valid": false,
+          "stale": true,
+          "errorCode": "COLLECTION_FAILED"
+        }
+      }
+    }
+  ]
+}

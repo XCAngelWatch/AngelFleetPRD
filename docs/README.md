@@ -6,6 +6,8 @@
 |---|---|---|
 | `technical-plan.md` | 完整 15 章与 A–E 附录；设计决策、迁移范围和验收摘要 | 主文档 |
 | [technical-design.md](technical-design.md) | 1Panel 固定提交的源码入口、节点采样、命令执行与结果对账、联调场景 | 源码事实链接到对应提交，目标契约与验收条件沿用主方案 |
+| [go-agent-development-plan.md](go-agent-development-plan.md) | 三仓库基线、节点端任务、里程碑、依赖和人日估算 | Go Agent 开发派工与验收计划 |
+| [go-agent-interface-contract.md](go-agent-interface-contract.md) | GA-01 的代码仓库与目录、节点注册、建连与首次采样接口 | Go 与控制台联调契约；[JSON 示例](examples/go-agent-first-sample.json)关联完整请求、响应与消息 |
 | [spaces/implementation-review.md](spaces/implementation-review.md) | 工程协作页的 GitHub 版本，按工作包整理实施边界与验收证据 | 开发与测试的评审工作页 |
 | `platform-constraints.md` | Cloudflare Workers、D1、DO、Queues、R2 的平台约束快照和官方来源 | 平台数字唯一集中来源 |
 | `angelfleetprd-threat-model.md` | 当前静态发布链与目标控制面的威胁模型 | 安全设计输入，非运行证明 |
@@ -18,8 +20,10 @@
 
 `dist/` 是 GitHub Pages 的唯一发布目录，由构建脚本生成，包含：
 
-- `index.html`、`technical-design.html`、`404.html`、`assets/`：静态阅读页面与流程图资源。
+- `index.html`、`technical-design.html`、`go-agent-interface-contract.html`、`404.html`、`assets/` 提供静态阅读页面与流程图资源。
 - `technical-plan.md`、`technical-design.md`、`operation-ledger.md`、`platform-constraints.md`、`angelfleetprd-threat-model.md`：可下载的源文档副本。
+- `go-agent-development-plan.md` 和 `spaces/implementation-review.md` 保留源目录结构，便于从开发任务跳转到验收记录。
+- `go-agent-interface-contract.md` 和 `examples/go-agent-first-sample.json` 可从节点接口契约页下载。
 - `command-state.json`、`acceptance-ids.json`：可下载的机器可读契约。
 - `build-manifest.json`：源文件哈希、章节、图表、搜索记录和验收编号计数。
 - `robots.txt`、`sitemap.xml`：公开站点索引信息。
@@ -34,4 +38,4 @@
 6. [威胁模型](angelfleetprd-threat-model.md)：按攻击面和证据缺口安排安全验收。
 7. [机器契约](command-state.json) 与 [验收注册表](acceptance-ids.json)：在 CI 和实施工具中消费。
 
-开发联调时可直接从[技术详细设计](technical-design.md)定位源代码，再用[工程协作页](spaces/implementation-review.md)核对本次工作包及验收证据。
+开发人员可从 [Go Agent 研发计划](go-agent-development-plan.md)领取工作包，在[技术详细设计](technical-design.md)核对调用链，联调时将实测结果登记到[工程协作页](spaces/implementation-review.md)。
