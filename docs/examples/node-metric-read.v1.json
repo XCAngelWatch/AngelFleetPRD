@@ -1,0 +1,575 @@
+{
+  "contractVersion": "node-metric-read.v1",
+  "exampleOrigin": "https://control.example.invalid",
+  "http": [
+    {
+      "id": "empty.metrics.read",
+      "request": {
+        "method": "GET",
+        "path": "/v1/tenants/tenant-a/nodes/node-a/metrics/latest?nodeIncarnation=inc-01",
+        "headers": {
+          "Cookie": "af_session=${USER_SESSION}"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json",
+          "Cache-Control": "private, no-store",
+          "X-Trace-Id": "trace-empty-metrics-read"
+        },
+        "body": {
+          "contractVersion": "node-metric-read.v1",
+          "tenantId": "tenant-a",
+          "nodeId": "node-a",
+          "nodeIncarnation": "inc-01",
+          "connectionState": "ONLINE",
+          "projectionRevision": "0",
+          "latestAttempt": null,
+          "metrics": {
+            "cpuUsedPercent": {
+              "unit": "percent",
+              "lastGood": null,
+              "latestValid": null,
+              "stale": true,
+              "errorCode": null
+            },
+            "memoryUsedBytes": {
+              "unit": "bytes",
+              "lastGood": null,
+              "latestValid": null,
+              "stale": true,
+              "errorCode": null
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "s1.create",
+      "request": {
+        "method": "POST",
+        "path": "/v1/tenants/tenant-a/nodes/node-a/commands",
+        "headers": {
+          "Idempotency-Key": "inspect-first-001",
+          "Cookie": "af_session=${USER_SESSION}",
+          "Origin": "https://control.example.invalid",
+          "X-CSRF-Token": "${CSRF_TOKEN}",
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "operation": "node.inspect",
+          "resourceVersion": "1",
+          "payload": {
+            "view": "overview"
+          }
+        }
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "commandId": "cmd-001",
+          "state": "QUEUED",
+          "expiresAt": 1795046468000,
+          "idempotencyReplay": false
+        }
+      }
+    },
+    {
+      "id": "s1.command.read",
+      "request": {
+        "method": "GET",
+        "path": "/v1/tenants/tenant-a/commands/cmd-001",
+        "headers": {
+          "Cookie": "af_session=${USER_SESSION}"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json",
+          "Cache-Control": "private, no-store"
+        },
+        "body": {
+          "tenantId": "tenant-a",
+          "nodeId": "node-a",
+          "nodeIncarnation": "inc-01",
+          "commandId": "cmd-001",
+          "state": "SUCCEEDED",
+          "revision": "5",
+          "operation": "node.inspect",
+          "intentHash": "sha256:43ef058831f3ca1a9d33940f2a5830b0641357d74681e0b264a401b0757ac533",
+          "result": {
+            "sampledAt": 1795046409000,
+            "metrics": {
+              "cpuUsedPercent": {
+                "value": 23.5,
+                "unit": "percent",
+                "sampledAt": 1795046409000,
+                "valid": true,
+                "stale": false
+              },
+              "memoryUsedBytes": {
+                "value": 1073741824,
+                "unit": "bytes",
+                "sampledAt": 1795046409000,
+                "valid": true,
+                "stale": false
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "s1.metrics.read",
+      "request": {
+        "method": "GET",
+        "path": "/v1/tenants/tenant-a/nodes/node-a/metrics/latest?nodeIncarnation=inc-01",
+        "headers": {
+          "Cookie": "af_session=${USER_SESSION}"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json",
+          "Cache-Control": "private, no-store",
+          "X-Trace-Id": "trace-s1-metrics-read"
+        },
+        "body": {
+          "contractVersion": "node-metric-read.v1",
+          "tenantId": "tenant-a",
+          "nodeId": "node-a",
+          "nodeIncarnation": "inc-01",
+          "connectionState": "ONLINE",
+          "projectionRevision": "1",
+          "latestAttempt": {
+            "commandId": "cmd-001",
+            "sampleOrder": "1",
+            "state": "SUCCEEDED"
+          },
+          "metrics": {
+            "cpuUsedPercent": {
+              "unit": "percent",
+              "lastGood": {
+                "value": 23.5,
+                "sampledAt": 1795046409000,
+                "commandId": "cmd-001"
+              },
+              "latestValid": true,
+              "stale": false,
+              "errorCode": null
+            },
+            "memoryUsedBytes": {
+              "unit": "bytes",
+              "lastGood": {
+                "value": 1073741824,
+                "sampledAt": 1795046409000,
+                "commandId": "cmd-001"
+              },
+              "latestValid": true,
+              "stale": false,
+              "errorCode": null
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "s2.create",
+      "request": {
+        "method": "POST",
+        "path": "/v1/tenants/tenant-a/nodes/node-a/commands",
+        "headers": {
+          "Idempotency-Key": "inspect-second-002",
+          "Cookie": "af_session=${USER_SESSION}",
+          "Origin": "https://control.example.invalid",
+          "X-CSRF-Token": "${CSRF_TOKEN}",
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "operation": "node.inspect",
+          "resourceVersion": "1",
+          "payload": {
+            "view": "overview"
+          }
+        }
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "commandId": "cmd-002",
+          "state": "QUEUED",
+          "expiresAt": 1795046479000,
+          "idempotencyReplay": false
+        }
+      }
+    },
+    {
+      "id": "s2.command.read",
+      "request": {
+        "method": "GET",
+        "path": "/v1/tenants/tenant-a/commands/cmd-002",
+        "headers": {
+          "Cookie": "af_session=${USER_SESSION}"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json",
+          "Cache-Control": "private, no-store"
+        },
+        "body": {
+          "tenantId": "tenant-a",
+          "nodeId": "node-a",
+          "nodeIncarnation": "inc-01",
+          "commandId": "cmd-002",
+          "state": "SUCCEEDED",
+          "revision": "5",
+          "operation": "node.inspect",
+          "intentHash": "sha256:a6239a9772001596b4623e1bd32d94622d079f6569809caa0003f958ec14df91",
+          "result": {
+            "sampledAt": 1795046420000,
+            "metrics": {
+              "cpuUsedPercent": {
+                "value": 0,
+                "unit": "percent",
+                "sampledAt": 1795046420000,
+                "valid": true,
+                "stale": false
+              },
+              "memoryUsedBytes": {
+                "value": null,
+                "unit": "bytes",
+                "sampledAt": null,
+                "valid": false,
+                "stale": true,
+                "errorCode": "COLLECTION_FAILED"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "s2.metrics.read",
+      "request": {
+        "method": "GET",
+        "path": "/v1/tenants/tenant-a/nodes/node-a/metrics/latest?nodeIncarnation=inc-01",
+        "headers": {
+          "Cookie": "af_session=${USER_SESSION}"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json",
+          "Cache-Control": "private, no-store",
+          "X-Trace-Id": "trace-s2-metrics-read"
+        },
+        "body": {
+          "contractVersion": "node-metric-read.v1",
+          "tenantId": "tenant-a",
+          "nodeId": "node-a",
+          "nodeIncarnation": "inc-01",
+          "connectionState": "ONLINE",
+          "projectionRevision": "2",
+          "latestAttempt": {
+            "commandId": "cmd-002",
+            "sampleOrder": "2",
+            "state": "SUCCEEDED"
+          },
+          "metrics": {
+            "cpuUsedPercent": {
+              "unit": "percent",
+              "lastGood": {
+                "value": 0,
+                "sampledAt": 1795046420000,
+                "commandId": "cmd-002"
+              },
+              "latestValid": true,
+              "stale": false,
+              "errorCode": null
+            },
+            "memoryUsedBytes": {
+              "unit": "bytes",
+              "lastGood": {
+                "value": 1073741824,
+                "sampledAt": 1795046409000,
+                "commandId": "cmd-001"
+              },
+              "latestValid": false,
+              "stale": true,
+              "errorCode": "COLLECTION_FAILED"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "offline.metrics.read",
+      "request": {
+        "method": "GET",
+        "path": "/v1/tenants/tenant-a/nodes/node-a/metrics/latest?nodeIncarnation=inc-01",
+        "headers": {
+          "Cookie": "af_session=${USER_SESSION}"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json",
+          "Cache-Control": "private, no-store",
+          "X-Trace-Id": "trace-offline-metrics-read"
+        },
+        "body": {
+          "contractVersion": "node-metric-read.v1",
+          "tenantId": "tenant-a",
+          "nodeId": "node-a",
+          "nodeIncarnation": "inc-01",
+          "connectionState": "OFFLINE",
+          "projectionRevision": "2",
+          "latestAttempt": {
+            "commandId": "cmd-002",
+            "sampleOrder": "2",
+            "state": "SUCCEEDED"
+          },
+          "metrics": {
+            "cpuUsedPercent": {
+              "unit": "percent",
+              "lastGood": {
+                "value": 0,
+                "sampledAt": 1795046420000,
+                "commandId": "cmd-002"
+              },
+              "latestValid": true,
+              "stale": true,
+              "errorCode": null
+            },
+            "memoryUsedBytes": {
+              "unit": "bytes",
+              "lastGood": {
+                "value": 1073741824,
+                "sampledAt": 1795046409000,
+                "commandId": "cmd-001"
+              },
+              "latestValid": false,
+              "stale": true,
+              "errorCode": "COLLECTION_FAILED"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "unauthenticated.metrics.read",
+      "request": {
+        "method": "GET",
+        "path": "/v1/tenants/tenant-a/nodes/node-a/metrics/latest?nodeIncarnation=inc-01",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "Content-Type": "application/json",
+          "Cache-Control": "private, no-store",
+          "X-Trace-Id": "trace-unauthenticated"
+        },
+        "body": {
+          "errorCode": "UNAUTHORIZED",
+          "traceId": "trace-unauthenticated"
+        }
+      }
+    },
+    {
+      "id": "forbidden.metrics.read",
+      "request": {
+        "method": "GET",
+        "path": "/v1/tenants/tenant-a/nodes/node-a/metrics/latest?nodeIncarnation=inc-01",
+        "headers": {
+          "Cookie": "af_session=${USER_B_SESSION}"
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "Content-Type": "application/json",
+          "Cache-Control": "private, no-store",
+          "X-Trace-Id": "trace-forbidden"
+        },
+        "body": {
+          "errorCode": "NODE_FORBIDDEN",
+          "traceId": "trace-forbidden"
+        }
+      }
+    },
+    {
+      "id": "mismatch.metrics.read",
+      "request": {
+        "method": "GET",
+        "path": "/v1/tenants/tenant-a/nodes/node-a/metrics/latest?nodeIncarnation=inc-old",
+        "headers": {
+          "Cookie": "af_session=${USER_SESSION}"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "Content-Type": "application/json",
+          "Cache-Control": "private, no-store",
+          "X-Trace-Id": "trace-mismatch"
+        },
+        "body": {
+          "errorCode": "NODE_INCARNATION_MISMATCH",
+          "traceId": "trace-mismatch"
+        }
+      }
+    },
+    {
+      "id": "invalid.metrics.read",
+      "request": {
+        "method": "GET",
+        "path": "/v1/tenants/tenant-a/nodes/node-a/metrics/latest",
+        "headers": {
+          "Cookie": "af_session=${USER_SESSION}"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "Content-Type": "application/json",
+          "Cache-Control": "private, no-store",
+          "X-Trace-Id": "trace-invalid"
+        },
+        "body": {
+          "errorCode": "INVALID_REQUEST",
+          "traceId": "trace-invalid"
+        }
+      }
+    },
+    {
+      "id": "unavailable.metrics.read",
+      "request": {
+        "method": "GET",
+        "path": "/v1/tenants/tenant-a/nodes/node-a/metrics/latest?nodeIncarnation=inc-01",
+        "headers": {
+          "Cookie": "af_session=${USER_SESSION}"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "Content-Type": "application/json",
+          "Cache-Control": "private, no-store",
+          "X-Trace-Id": "trace-unavailable"
+        },
+        "body": {
+          "errorCode": "STORAGE_UNAVAILABLE",
+          "traceId": "trace-unavailable"
+        }
+      }
+    }
+  ],
+  "websocket": [
+    {
+      "id": "s1.result",
+      "direction": "connector → AgentConn",
+      "message": {
+        "version": 1,
+        "type": "command.result",
+        "messageId": "msg-command-result",
+        "tenantId": "tenant-a",
+        "nodeId": "node-a",
+        "nodeIncarnation": "inc-01",
+        "connectionEpoch": "1",
+        "sequence": "4",
+        "commandId": "cmd-001",
+        "eventId": "event-003",
+        "agentEventSequence": "3",
+        "state": "SUCCEEDED",
+        "intentHash": "sha256:43ef058831f3ca1a9d33940f2a5830b0641357d74681e0b264a401b0757ac533",
+        "result": {
+          "sampledAt": 1795046409000,
+          "metrics": {
+            "cpuUsedPercent": {
+              "value": 23.5,
+              "unit": "percent",
+              "sampledAt": 1795046409000,
+              "valid": true,
+              "stale": false
+            },
+            "memoryUsedBytes": {
+              "value": 1073741824,
+              "unit": "bytes",
+              "sampledAt": 1795046409000,
+              "valid": true,
+              "stale": false
+            }
+          }
+        },
+        "contentHash": "sha256:f41a87d89dbc52b646a95ad83ebadda637c925b6ad01d0db78479ba6010d0ab9",
+        "traceId": "trace-first-sample"
+      }
+    },
+    {
+      "id": "s2.result",
+      "direction": "connector → AgentConn",
+      "message": {
+        "version": 1,
+        "type": "command.result",
+        "messageId": "msg-command-result-002",
+        "tenantId": "tenant-a",
+        "nodeId": "node-a",
+        "nodeIncarnation": "inc-01",
+        "connectionEpoch": "1",
+        "sequence": "7",
+        "commandId": "cmd-002",
+        "eventId": "event-006",
+        "agentEventSequence": "3",
+        "state": "SUCCEEDED",
+        "intentHash": "sha256:a6239a9772001596b4623e1bd32d94622d079f6569809caa0003f958ec14df91",
+        "result": {
+          "sampledAt": 1795046420000,
+          "metrics": {
+            "cpuUsedPercent": {
+              "value": 0,
+              "unit": "percent",
+              "sampledAt": 1795046420000,
+              "valid": true,
+              "stale": false
+            },
+            "memoryUsedBytes": {
+              "value": null,
+              "unit": "bytes",
+              "sampledAt": null,
+              "valid": false,
+              "stale": true,
+              "errorCode": "COLLECTION_FAILED"
+            }
+          }
+        },
+        "contentHash": "sha256:b4029e0fd24925dce3cad17f576d35d7b9f2515871ff12701d7ebd9d75f5e316",
+        "traceId": "trace-second-sample"
+      }
+    }
+  ],
+  "timeline": [
+    "empty.metrics.read",
+    "s1.create",
+    "s1.result",
+    "s1.command.read",
+    "s1.metrics.read",
+    "s2.create",
+    "s2.result",
+    "s2.command.read",
+    "s2.metrics.read"
+  ]
+}

@@ -4,7 +4,9 @@
   "description": "Public 1Panel Cloudflare control-plane design documentation",
   "scripts": {
     "build": "node scripts/build.mjs",
-    "check": "node scripts/check.mjs",
+    "check": "node scripts/check.mjs && npm run check:ga01 && npm run check:metric-read",
+    "check:ga01": "node scripts/check-go-agent-contract.mjs",
+    "check:metric-read": "node scripts/check-node-metric-read.mjs",
     "preview": "node scripts/preview.mjs"
   },
   "type": "module",
