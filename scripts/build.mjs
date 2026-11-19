@@ -194,17 +194,19 @@ function renderGroup(group, doc) {
       const heading = group.tokens[start];
       const title = group.tokens[start + 1].content;
       const body = render(group.tokens.slice(start + 3, branches[index + 1]));
-      return `<details class="feature-branch"><summary id="${heading.attrGet('id')}">${escape(title)}</summary><div class="feature-branch-body">${body}</div></details>`;
+      return `<details class="feature-branch"><summary id="${heading.attrGet('id')}">${escape(title)}<svg class="feature-connector" viewBox="0 0 100 32" preserveAspectRatio="none" aria-hidden="true" focusable="false"><path d="M0 16 C44 16 58 28 100 28" fill="none" vector-effect="non-scaling-stroke"/></svg></summary><div class="feature-branch-body">${body}</div></details>`;
     }).join('\n');
     return `${render(group.tokens.slice(0, branches[0]))}
       <div class="feature-tree">
         <div class="feature-tools" hidden>
-          <div class="feature-filter"><label for="feature-filter">查找上游功能</label><input type="search" id="feature-filter" placeholder="例如 Docker、MCP、快照"></div>
+          <div class="feature-filter"><label for="feature-filter">查找上游功能</label><div class="feature-search-field">${searchIcon}<input type="search" id="feature-filter" placeholder="例如 Docker、MCP、快照"></div></div>
           <button class="feature-toggle" type="button">全部展开</button>
         </div>
         <p class="feature-status" role="status"></p>
-        <div class="feature-root">1Panel v2 <span>${branches.length} 个功能域</span></div>
-        <div class="feature-branches">${details}</div>
+        <div class="feature-canvas">
+          <div class="feature-root"><strong>1Panel v2</strong><span>${branches.length} 个功能域</span></div>
+          <div class="feature-branches">${details}</div>
+        </div>
       </div>`;
   }
   return md.renderer.render(group.tokens, md.options, doc)
