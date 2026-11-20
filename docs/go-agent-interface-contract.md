@@ -8,6 +8,7 @@
 
 | 操作 | API 与约束 |
 |---|---|
+| 平台设备总览 | `GET /v1/platform/devices` 使用登录用户的访问令牌，并复核内置系统超管身份。返回租户和设备标识、名称、状态、最近联系时间，支持分页和包含已停用设备。终端、资产与设备操作继续使用各租户的授权接口。 |
 | 终端目标 | `/v1/tenants/{tenant}/nodes/{node}/terminal-targets` 登记或列出本设备目标。SSH 绑定账户、主机、端口及 SHA256 主机密钥指纹。本机绑定实际 OS 账户，容器绑定完整不可变 ID 和容器内账户。SSH 私钥引用由设备本地解析。 |
 | 会话打开 | `POST /v1/tenants/{tenant}/nodes/{node}/terminals` 带幂等键与目标 ID。浏览器和设备分别使用一次性角色票据接入同一 TerminalRelay，在两端就绪和目标复核成功后开启交互。 |
 | 租约与撤权 | 初始租约最多 90 秒，浏览器每 30 秒请求续租。中继和设备同时执行绝对截止时间。显式撤权先持久化关闭状态，再通知会话双方。断线后重新打开会话，输入只在原会话内按序发送。 |
@@ -34,26 +35,21 @@ GA-08 至 GA-10 使用独立读取契约 `node-metric-read.v1`。需要在新标
 
 # 1. 仓库、进程与发行边界
 
-**节点代码归 `XCAngelWatch/AngelFleetAgent`。** 产品团队在该下游仓保留 1Panel 的提交历史，首个同步点为 `aaba86d0ef71a31ee319e74998ffe83c64abf4b6`。GA-04 负责仓库供应、写权限、服务代码和发行。connector 与采集点补丁在同一仓验证兼容性，三个 Go 模块可分别构建。[上游固定提交](https://github.com/1Panel-dev/1Panel/commit/aaba86d0ef71a31ee319e74998ffe83c64abf4b6)
+**设备端代码归 `XCAngelWatch/AngelFleetAgent`。** 本期固定上游子模块为 1Panel v2.5.1，提交 `806de6307bd56b11883e04059ad9f1e41ecd06e8`。设备服务使用独立的 Go 模块与版本号。[上游固定提交](https://github.com/1Panel-dev/1Panel/commit/806de6307bd56b11883e04059ad9f1e41ecd06e8)
 
 ```text
 XCAngelWatch/AngelFleetAgent/
-├── core/                         上游 Go 模块，保留启动、代理与数据库初始化
-├── agent/                        上游 Go 模块，持有采集器和本机业务执行器
-│   ├── app/dto/                  对现有应答增补采集时刻和字段有效性
-│   └── app/service/              dashboard.go 在采集点记录结果或错误
-└── connector/                    新 Go 模块 github.com/XCAngelWatch/AngelFleetAgent/connector
-    ├── go.mod
-    ├── cmd/connector/            装配依赖、启动服务、退出处理
-    ├── internal/identity/        本地密钥、注册意图、签名与票据交换
-    ├── internal/protocol/        HTTP/WSS 类型、摘要输入、版本与限值
-    ├── internal/connection/      主动 WSS、握手、重连、代次隔离
-    ├── internal/journal/         SQLite 中的代次、接收记录、结果及确认状态
-    ├── internal/adapter/         准许的 operation 到本机 Go API 的映射
-    └── packaging/systemd/        angelfleet-connector.service
+├── upstream/1Panel/               固定版本的上游子模块
+└── connector/
+    ├── cmd/angelfleet-agent/      设备服务入口
+    ├── cmd/angelfleet-updater/    安装、校验、切换与恢复入口
+    ├── internal/protocol/         注册、握手、重连和事件确认
+    ├── internal/state/            持久化身份与 SQLite 账本
+    ├── internal/inventory/        Linux 原生采集和可选的 1Panel 读取
+    └── internal/update/           签名清单、更新收件箱与回滚
 ```
 
-`core/go.mod`、`agent/go.mod` 沿用上游模块名。connector 作为独立 systemd 服务，通过本机 Unix HTTP 调用 agent。1Panel 适配器的目标环境是 Ubuntu 24.04 LTS、amd64、1Panel 社区版主节点。该模式下 `/etc/1panel` 为 `0700`，`agent.sock` 为 `0600`。服务使用经核验的 agent 有效 UID，启动时检查 socket 类型、属主和权限。密钥与 journal 保存在仅服务账户可访问的 `/var/lib/angelfleet-connector/`，重启后沿用原身份并恢复未确认结果。GA-02 登记实际镜像和构建摘要。[agent 监听与权限](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/server/server.go#L39-L145)
+设备注册后由 systemd 启动独立 Agent，重启时从持久化状态目录取回身份与待报事件。启用 1Panel 适配器时，目录权限须为 `0700`，Unix 套接字权限须为 `0600`。设备检查目录、套接字和实际连接对端的 UID，读取节点概览。下文 GA 系列工单另列逐指标采样与验证条件。
 
 | 仓库 | 团队交付 |
 |---|---|
