@@ -17,11 +17,11 @@
 |---|---|---|
 | 性能、日志与任务 | 逐项用设备累计字节复算磁盘与网卡速率，对照主机 journal 和任务记录核对分页及来源。刷新新增采样命令为零。任务详情支持深链接，设备审计支持独立入口。 | 首采前心跳、双探针同时失败、真实读依赖中断与撤权交叉等 GA-10 故障项。 |
 | 主机与容器 | 核对进程及端口、磁盘挂载、授权目录浏览和分块下载摘要。核对 Compose 项目、端口、共用网络与卷，以及已登记容器的用量和日志。 | 文件写入、回收站与分享，镜像、网络和卷的管理。 |
-| 接入与日志保留 | 未消费票据撤销重发，同键取得同一张新票据。清理到期任务事件时，保留期内记录和清理回执仍可读。 | 首次接入失败步骤、可信重装与退役处置。 |
+| 接入与日志保留 | 未消费票据可撤销重发。证书不受信任和状态目录写入失败均保留首报，绑定后可核对来源与首次主机探测。恢复内存采样后仍可查看首次缺项。任务事件清理保留有效期内记录和回执。 | 接入诊断其余故障的真机覆盖、可信重装与退役处置。 |
 | 告警与通知 | 两个租户分别在节点配置规则。CPU 和内存超过阈值后触发，停止测试负载后恢复。四组记录都用原探针时刻复算，两边的只读浏览均未新增采样任务。 | 邮件与 Webhook 的真实收件、重试与去重。 |
 | 数据库 | 托管和远端 MySQL 可按实例授权盘点，远端可登记、同步。设备 A 读回设备 B 的隔离库版本 8.4.13。证书名错误无法登记，凭据失效后保留最近有效版本。 | PostgreSQL、MongoDB、Redis，远端备份恢复和 S3 读回。 |
 
-性能与日志的首批运行核对了旧 Agent 和双机浏览。Linux 资源、任务事件清理及 MySQL 各有后续独立运行。[性能与日志验收](https://github.com/XCAngelWatch/AngelFleetConsole/blob/7a9a39fee365ee34b66ae1d6493892c1fb7173fb/docs/qa/fleet-observability-20261120.md) · [资源、数据库与告警验收](https://github.com/XCAngelWatch/AngelFleetConsole/blob/67cdacb983b5d959b9cda91485c98eff77029ea5/docs/qa/linux-resources-20261121.md)
+性能与日志的首批运行核对了旧 Agent 和双机浏览。Linux 资源、任务事件清理及 MySQL 各有后续独立运行。[性能与日志验收](https://github.com/XCAngelWatch/AngelFleetConsole/blob/7a9a39fee365ee34b66ae1d6493892c1fb7173fb/docs/qa/fleet-observability-20261120.md) · [资源、数据库、告警与接入诊断验收](https://github.com/XCAngelWatch/AngelFleetConsole/blob/ebdca1ea878aa40663f3b386685aa7935c9be73f/docs/qa/linux-resources-20261121.md)
 
 ## 实测记录
 
