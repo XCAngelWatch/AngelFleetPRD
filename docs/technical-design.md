@@ -20,7 +20,7 @@ M1 直接接入 Cloudflare。后续按选入的功能启用终端 Relay、R2 和
 |---|---|---|
 | AngelFleetConsole · 前端 | `src/app/` 节点页、`src/lib/api/` 客户端、`src/lib/auth/permission-policy.ts` 权限目录 | 复用 React/Next.js 账户、导航和审计页面，接入同源会话、节点概览、命令详情及指标来源。 |
 | AngelFleetConsole · 控制面 | `cloudflare/api/src/router.ts` 和同目录的环境绑定 | 保留 `/api/v1` 管理接口，将新 `/v1` 路由接到 TenantData、AgentConn。先分流 Upgrade，再对普通 HTTP 响应做包装。 |
-| AngelFleetAgent · connector | 在下游仓新建 `connector/cmd/connector/`，由 `connector/internal/` 下的 `identity`、`protocol`、`connection`、`journal`、`adapter` 承担注册、报文、连接、落盘和本机调用 | 独立 Go 模块及 systemd 服务。首验 Ubuntu 24.04 LTS / amd64 社区版主节点。启动时核验 agent Unix socket 的类型、属主、权限，以核准的服务 UID 访问；密钥和 journal 落在受限的 `/var/lib/angelfleet-connector/`。 |
+| AngelFleetAgent · connector | 在下游仓新建 `connector/cmd/connector/`，由 `connector/internal/` 下的 `identity`、`protocol`、`connection`、`journal`、`adapter` 承担注册、报文、连接、落盘和本机调用 | 独立 Go 模块及 systemd 服务。该适配器面向 Ubuntu 24.04 LTS / amd64 社区版主节点。独立 Agent 的本期双租户验收使用两台 Ubuntu 24.04 ARM64 设备。启动时核验 agent Unix socket 的类型、属主、权限，以核准的服务 UID 访问；密钥和 journal 落在受限的 `/var/lib/angelfleet-connector/`。 |
 | AngelFleetAgent · 1Panel 执行器 | 下游保留上游 `aaba86d` 的 `core/`、`agent/`。GA-07 改 `agent/app/service/dashboard.go` 的采集点与 `agent/app/dto/` 对应应答 | 原 Go 维护本机数据库、调度器和资源操作，原 Vue 用于核对流程和 DTO。connector 只将已登记的 operation 和参数映射到固定入口。P6 退役 core 前另验独立升级、旧快照转换及共享数据解耦。[Go 模块与运行环境](go-agent-interface-contract.md#1-仓库进程与发行边界) |
 
 ### 云端部署与接口兼容

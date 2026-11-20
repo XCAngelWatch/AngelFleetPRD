@@ -14,7 +14,7 @@
 | 资产和合规 | 用节点和身份代次读取资产。合规结果关联租户策略版本及原始观测 ID，分别返回系统版本、Agent 版本和根分区可用字节的通过、未通过或未知。 |
 | 签名升级验收 | 两个真实版本分别绑定架构、字节长度、SHA-256 和发行签名。先行设备通过本机健康检查、三次连续心跳及升级后的资产回读后才可扩批。失败设备恢复原版本及原账本。 |
 
-每个终端故障用例保存同一终端 ID 下的浏览器关闭、中继关闭、实际进程退出以及时间。跨租户读取、同名容器替换、指纹变化、慢消费者、并发上限和撤权通知丢失分别签收。双租户两台独立 amd64 实机的结果与 ARM64 先行测试分别记录。
+每个终端故障用例保存同一终端 ID 下的浏览器关闭、中继关闭、实际进程退出以及时间。跨租户读取、同名容器替换、指纹变化、慢消费者、并发上限和撤权通知丢失分别签收。正式验收在同一预览控制面上接入两台独立 Ubuntu 24.04 ARM64 真机，每个租户各一台。核对各自的宿主机摘要、三类终端以及双向拒绝记录。ARM64 和 amd64 发行产物另从私有仓库重建核对。
 
 **目标修订与会话关闭。** 修改终端目标时提交当前 `revision`。控制面在同一事务内增加版本、撤销旧授权、记录审计，并通知旧会话关闭。管理员在新修订上重新授权。设备通过认证中继的握手时间与本机单调时钟计算截止点，续租时再次核对中继时间。输入和输出各自按序确认并限制待传字节数。审计保存会话标识、账户、目标、开始与结束时间和关闭原因。
 
@@ -53,7 +53,7 @@ XCAngelWatch/AngelFleetAgent/
     └── packaging/systemd/        angelfleet-connector.service
 ```
 
-`core/go.mod`、`agent/go.mod` 沿用上游模块名。connector 作为独立 systemd 服务，通过本机 Unix HTTP 调用 agent。首个目标环境是 Ubuntu 24.04 LTS、amd64、1Panel 社区版主节点。该模式下 `/etc/1panel` 为 `0700`，`agent.sock` 为 `0600`。服务使用经核验的 agent 有效 UID，启动时检查 socket 类型、属主和权限。密钥与 journal 保存在仅服务账户可访问的 `/var/lib/angelfleet-connector/`，重启后沿用原身份并恢复未确认结果。GA-02 登记实际镜像和构建摘要。[agent 监听与权限](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/server/server.go#L39-L145)
+`core/go.mod`、`agent/go.mod` 沿用上游模块名。connector 作为独立 systemd 服务，通过本机 Unix HTTP 调用 agent。1Panel 适配器的目标环境是 Ubuntu 24.04 LTS、amd64、1Panel 社区版主节点。该模式下 `/etc/1panel` 为 `0700`，`agent.sock` 为 `0600`。服务使用经核验的 agent 有效 UID，启动时检查 socket 类型、属主和权限。密钥与 journal 保存在仅服务账户可访问的 `/var/lib/angelfleet-connector/`，重启后沿用原身份并恢复未确认结果。GA-02 登记实际镜像和构建摘要。[agent 监听与权限](https://github.com/1Panel-dev/1Panel/blob/aaba86d0ef71a31ee319e74998ffe83c64abf4b6/agent/server/server.go#L39-L145)
 
 | 仓库 | 团队交付 |
 |---|---|
