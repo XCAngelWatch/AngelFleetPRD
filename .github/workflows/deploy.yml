@@ -28,7 +28,7 @@ jobs:
       - run: npm run build
       - run: npm run check
       - name: Package offline handbook
-        run: python3 scripts/package-offline.py
+        run: node scripts/package-offline.mjs
       - name: Archive generated site
         uses: actions/upload-artifact@v4
         with:

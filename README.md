@@ -27,7 +27,7 @@ npm run preview
 
 随后访问 `http://localhost:4173`。`npm run check` 检查全部章节、锚点、站内资源、公开引用和关键范围，确保站点与 Markdown 内容一致。
 
-在装有 Python 3 的 macOS 或 Linux 上运行 `npm run offline` 会重新构建、校验并输出 `dist/AngelFleet-docs-v版本-日期.zip`。解压后双击 `index.html` 即可离线阅读、搜索及查看流程图。
+运行 `npm run offline` 会重新构建、校验并输出 `dist/AngelFleet-docs-v版本-日期.zip`。需要 Python 3，Windows 使用 `python`，macOS 和 Linux 使用 `python3`。解压后双击 `index.html` 即可离线阅读、搜索及查看流程图。
 
 ## 部署
 

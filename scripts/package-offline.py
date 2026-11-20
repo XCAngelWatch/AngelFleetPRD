@@ -1,6 +1,7 @@
 """Package the verified site with a classic script that browsers can load from disk."""
 
 import json
+import os
 import re
 import subprocess
 import tempfile
@@ -9,6 +10,7 @@ from pathlib import Path
 
 
 root = Path(__file__).resolve().parents[1]
+esbuild = root / "node_modules" / ".bin" / ("esbuild.cmd" if os.name == "nt" else "esbuild")
 site = root / "dist"
 manifest = json.loads((site / "build-manifest.json").read_text(encoding="utf-8"))
 name = f"AngelFleet-docs-v{manifest['version']}-{manifest['publicationDate']}"
@@ -21,7 +23,7 @@ with tempfile.TemporaryDirectory(dir=site) as temporary:
         ("src/mermaid.js", "offline-diagrams.js", "--global-name=AngelFleetDiagrams"),
     ]:
         subprocess.run([
-            str(root / "node_modules/.bin/esbuild"), entry, "--bundle", option,
+            str(esbuild), entry, "--bundle", option,
             "--format=iife", "--target=es2022", "--minify", "--legal-comments=linked",
             f"--outfile={work / filename}",
         ], cwd=root, check=True)
